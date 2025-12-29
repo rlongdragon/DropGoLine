@@ -37,6 +37,9 @@ namespace DropGoLine {
 
     private Color currentBorderColor;
 
+    public event Action<IDataObject> OnDataDrop;
+    private bool isDragEnter = false;
+
     public ModernCard() {
       this.DoubleBuffered = true;
       this.SetStyle(ControlStyles.UserPaint, true);
@@ -48,12 +51,34 @@ namespace DropGoLine {
 
       // ⚠️ 關鍵改變 2：維持背景透明
       this.BackColor = Color.Transparent;
+      
+      this.AllowDrop = true; // 啟用拖曳
 
       this.ForeColor = Color.White;
       currentBorderColor = BorderColor;
 
       this.MouseEnter += (s, e) => { currentBorderColor = HoverBorderColor; this.Invalidate(); };
       this.MouseLeave += (s, e) => { currentBorderColor = BorderColor; this.Invalidate(); };
+    }
+
+    protected override void OnDragEnter(DragEventArgs e) {
+        base.OnDragEnter(e);
+        e.Effect = DragDropEffects.Copy;
+        isDragEnter = true;
+        this.Invalidate();
+    }
+
+    protected override void OnDragLeave(EventArgs e) {
+        base.OnDragLeave(e);
+        isDragEnter = false;
+        this.Invalidate();
+    }
+
+    protected override void OnDragDrop(DragEventArgs e) {
+        base.OnDragDrop(e);
+        isDragEnter = false;
+        OnDataDrop?.Invoke(e.Data);
+        this.Invalidate();
     }
 
     // ⚠️ 關鍵改變 3：確保背景繪製正確
@@ -74,10 +99,17 @@ namespace DropGoLine {
       // 為了防止邊框被切掉，矩形要縮一點點
       RectangleF rect = new RectangleF(0, 0, this.Width, this.Height);
 
+      // 判斷是否正在拖曳中，調整邊框樣式
+      Color targetBorderColor = isDragEnter ? Color.Cyan : currentBorderColor;
+      float targetBorderSize = isDragEnter ? BorderSize + 2 : BorderSize;
+      DashStyle targetDashStyle = isDragEnter ? DashStyle.Dash : DashStyle.Solid;
+
       using (GraphicsPath path = GetRoundedPath(rect, BorderRadius))
-      using (Pen pen = new Pen(currentBorderColor, BorderSize))
+      using (Pen pen = new Pen(targetBorderColor, targetBorderSize))
       using (SolidBrush brush = new SolidBrush(CardColor))
       {
+        pen.DashStyle = targetDashStyle;
+
         // 1. 填滿半透明區域
         e.Graphics.FillPath(brush, path);
         
@@ -85,7 +117,7 @@ namespace DropGoLine {
         e.Graphics.CompositingMode = CompositingMode.SourceOver;
 
         // 2. 畫邊框
-        if (BorderSize > 0)
+        if (targetBorderSize > 0)
             e.Graphics.DrawPath(pen, path);
 
         // 3. 手動繪製文字 (解決 Label 白底問題)

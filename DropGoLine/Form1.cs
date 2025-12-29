@@ -61,6 +61,57 @@ namespace DropGoLine
       // 設定深色模式
       int useDarkMode = 1;
       DwmSetWindowAttribute(this.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref useDarkMode, sizeof(int));
+
+      // 訂閱 ModernCard 的拖曳事件
+      if (modernCard1 != null) {
+          modernCard1.OnDataDrop += HandleDataDrop;
+      }
+    }
+
+    private void HandleDataDrop(IDataObject data) {
+        System.Text.StringBuilder info = new System.Text.StringBuilder();
+        info.AppendLine("【收到拖曳資料】");
+        info.AppendLine("--------------------------------------------------");
+
+        // 1. 檔案列表
+        if (data.GetDataPresent(DataFormats.FileDrop)) {
+            string[] files = (string[])data.GetData(DataFormats.FileDrop);
+            info.AppendLine($"[檔案] 共 {files.Length} 個：");
+            foreach (var file in files) {
+                info.AppendLine($" - {System.IO.Path.GetFileName(file)}");
+            }
+        }
+
+        // 2. 純文字
+        if (data.GetDataPresent(DataFormats.Text)) {
+            string text = (string)data.GetData(DataFormats.Text);
+            info.AppendLine($"[文字]：{text}");
+        }
+        else if (data.GetDataPresent(DataFormats.UnicodeText)) {
+            string text = (string)data.GetData(DataFormats.UnicodeText);
+            info.AppendLine($"[文字(Unicode)]：{text}");
+        }
+
+        // 3. 圖片
+        if (data.GetDataPresent(DataFormats.Bitmap)) {
+            Bitmap bmp = (Bitmap)data.GetData(DataFormats.Bitmap);
+            info.AppendLine($"[圖片]：{bmp.Width} x {bmp.Height} pixels");
+        }
+
+        // 4. HTML
+        if (data.GetDataPresent(DataFormats.Html)) {
+             string html = (string)data.GetData(DataFormats.Html);
+             info.AppendLine($"[HTML]：(長度 {html.Length})");
+        }
+
+        // 5. 所有的格式 (Debug 用)
+        info.AppendLine("--------------------------------------------------");
+        info.AppendLine("可用格式：");
+        foreach (var fmt in data.GetFormats()) {
+            info.AppendLine($" - {fmt}");
+        }
+
+        MessageBox.Show(info.ToString(), "拖曳內容測試");
     }
 
     private void Form1_Load(object sender, EventArgs e) {
