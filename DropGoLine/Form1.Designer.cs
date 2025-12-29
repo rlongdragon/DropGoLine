@@ -1,24 +1,20 @@
-﻿namespace DropGoLine
-{
-    partial class Form1
-    {
-        /// <summary>
-        ///  Required designer variable.
-        /// </summary>
-        private System.ComponentModel.IContainer components = null;
+﻿namespace DropGoLine {
+  partial class Form1 {
+    /// <summary>
+    ///  Required designer variable.
+    /// </summary>
+    private System.ComponentModel.IContainer components = null;
 
-        /// <summary>
-        ///  Clean up any resources being used.
-        /// </summary>
-        /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing && (components != null))
-            {
-                components.Dispose();
-            }
-            base.Dispose(disposing);
-        }
+    /// <summary>
+    ///  Clean up any resources being used.
+    /// </summary>
+    /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
+    protected override void Dispose(bool disposing) {
+      if (disposing && (components != null)) {
+        components.Dispose();
+      }
+      base.Dispose(disposing);
+    }
 
     #region Windows Form Designer generated code
 
@@ -39,8 +35,8 @@
       其他設定ToolStripMenuItem = new ToolStripMenuItem();
       結束ToolStripMenuItem1 = new ToolStripMenuItem();
       panel1 = new Panel();
-      modernCard1 = new ModernCard();
       pnlMembers = new Panel();
+      modernCard1 = new ModernCard();
       btnTestLayout = new Button();
       contextMenuStrip1.SuspendLayout();
       panel1.SuspendLayout();
@@ -113,13 +109,22 @@
       panel1.Controls.Add(pnlMembers);
       panel1.Controls.Add(modernCard1);
       panel1.Dock = DockStyle.Fill;
-      panel1.Location = new Point(15, 15);
+      panel1.Location = new Point(10, 10);
       panel1.Name = "panel1";
-      panel1.Size = new Size(308, 420);
+      panel1.Size = new Size(318, 430);
       panel1.TabIndex = 1;
+      // 
+      // pnlMembers
+      // 
+      pnlMembers.Dock = DockStyle.Fill;
+      pnlMembers.Location = new Point(0, 120);
+      pnlMembers.Name = "pnlMembers";
+      pnlMembers.Size = new Size(318, 310);
+      pnlMembers.TabIndex = 2;
       // 
       // modernCard1
       // 
+      modernCard1.AllowDrop = true;
       modernCard1.BackColor = Color.Transparent;
       modernCard1.BorderColor = Color.FromArgb(50, 255, 255, 255);
       modernCard1.BorderRadius = 10;
@@ -131,27 +136,20 @@
       modernCard1.HoverBorderColor = Color.FromArgb(100, 255, 255, 255);
       modernCard1.Location = new Point(0, 0);
       modernCard1.Name = "modernCard1";
-      modernCard1.Size = new Size(308, 120);
+      modernCard1.Size = new Size(318, 120);
       modernCard1.TabIndex = 1;
       modernCard1.Text = "將選取拖曳到這個區塊";
-      // 
-      // pnlMembers
-      // 
-      pnlMembers.Dock = DockStyle.Fill;
-      pnlMembers.Location = new Point(0, 120);
-      pnlMembers.Name = "pnlMembers";
-      pnlMembers.Size = new Size(308, 300);
-      pnlMembers.TabIndex = 2;
+      modernCard1.Paint += modernCard1_Paint;
       // 
       // btnTestLayout
       // 
-      btnTestLayout.Location = new Point(220, 10);
+      btnTestLayout.Location = new Point(18, 18);
       btnTestLayout.Name = "btnTestLayout";
       btnTestLayout.Size = new Size(75, 23);
       btnTestLayout.TabIndex = 3;
       btnTestLayout.Text = "測試佈局";
       btnTestLayout.UseVisualStyleBackColor = true;
-      btnTestLayout.Click += new EventHandler(this.btnTestLayout_Click);
+      btnTestLayout.Click += btnTestLayout_Click;
       // 
       // Form1
       // 
@@ -169,7 +167,6 @@
       contextMenuStrip1.ResumeLayout(false);
       panel1.ResumeLayout(false);
       modernCard1.ResumeLayout(false);
-      modernCard1.PerformLayout();
       ResumeLayout(false);
     }
 
