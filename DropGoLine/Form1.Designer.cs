@@ -40,12 +40,11 @@
       結束ToolStripMenuItem1 = new ToolStripMenuItem();
       panel1 = new Panel();
       modernCard1 = new ModernCard();
-      flowLayoutPanel1 = new FlowLayoutPanel();
-      panel2 = new Panel();
+      pnlMembers = new Panel();
+      btnTestLayout = new Button();
       contextMenuStrip1.SuspendLayout();
       panel1.SuspendLayout();
       modernCard1.SuspendLayout();
-      flowLayoutPanel1.SuspendLayout();
       SuspendLayout();
       // 
       // notifyIcon
@@ -111,8 +110,8 @@
       // 
       // panel1
       // 
+      panel1.Controls.Add(pnlMembers);
       panel1.Controls.Add(modernCard1);
-      panel1.Controls.Add(flowLayoutPanel1);
       panel1.Dock = DockStyle.Fill;
       panel1.Location = new Point(15, 15);
       panel1.Name = "panel1";
@@ -126,31 +125,33 @@
       modernCard1.BorderRadius = 10;
       modernCard1.BorderSize = 1;
       modernCard1.CardColor = Color.FromArgb(100, 40, 40, 40);
-      modernCard1.Dock = DockStyle.Fill;
+      modernCard1.Controls.Add(btnTestLayout);
+      modernCard1.Dock = DockStyle.Top;
       modernCard1.ForeColor = Color.White;
       modernCard1.HoverBorderColor = Color.FromArgb(100, 255, 255, 255);
       modernCard1.Location = new Point(0, 0);
       modernCard1.Name = "modernCard1";
-      modernCard1.Size = new Size(308, 122);
+      modernCard1.Size = new Size(308, 120);
       modernCard1.TabIndex = 1;
-      modernCard1.Text = "將選取拖曳到這個區塊"; 
-
+      modernCard1.Text = "將選取拖曳到這個區塊";
       // 
-      // flowLayoutPanel1
+      // pnlMembers
       // 
-      flowLayoutPanel1.Controls.Add(panel2);
-      flowLayoutPanel1.Dock = DockStyle.Bottom;
-      flowLayoutPanel1.Location = new Point(0, 122);
-      flowLayoutPanel1.Name = "flowLayoutPanel1";
-      flowLayoutPanel1.Size = new Size(308, 298);
-      flowLayoutPanel1.TabIndex = 0;
+      pnlMembers.Dock = DockStyle.Fill;
+      pnlMembers.Location = new Point(0, 120);
+      pnlMembers.Name = "pnlMembers";
+      pnlMembers.Size = new Size(308, 300);
+      pnlMembers.TabIndex = 2;
       // 
-      // panel2
+      // btnTestLayout
       // 
-      panel2.Location = new Point(3, 3);
-      panel2.Name = "panel2";
-      panel2.Size = new Size(160, 100);
-      panel2.TabIndex = 0;
+      btnTestLayout.Location = new Point(220, 10);
+      btnTestLayout.Name = "btnTestLayout";
+      btnTestLayout.Size = new Size(75, 23);
+      btnTestLayout.TabIndex = 3;
+      btnTestLayout.Text = "測試佈局";
+      btnTestLayout.UseVisualStyleBackColor = true;
+      btnTestLayout.Click += new EventHandler(this.btnTestLayout_Click);
       // 
       // Form1
       // 
@@ -161,7 +162,7 @@
       Controls.Add(panel1);
       ForeColor = SystemColors.MenuHighlight;
       Name = "Form1";
-      Padding = new Padding(15);
+      Padding = new Padding(10);
       Text = "Form1";
       TransparencyKey = Color.White;
       Load += Form1_Load;
@@ -169,7 +170,6 @@
       panel1.ResumeLayout(false);
       modernCard1.ResumeLayout(false);
       modernCard1.PerformLayout();
-      flowLayoutPanel1.ResumeLayout(false);
       ResumeLayout(false);
     }
 
@@ -185,9 +185,8 @@
     private ToolStripMenuItem 斷開連線ToolStripMenuItem;
     private ToolStripMenuItem 其他設定ToolStripMenuItem;
     private Panel panel1;
-    private FlowLayoutPanel flowLayoutPanel1;
-    private Panel panel2;
-    // private Label label1; // 移除
+    private Panel pnlMembers;
+    private Button btnTestLayout;
     private ModernCard modernCard1;
   }
 }

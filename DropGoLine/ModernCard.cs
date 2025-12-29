@@ -37,7 +37,7 @@ namespace DropGoLine {
 
     private Color currentBorderColor;
 
-    public event Action<IDataObject> OnDataDrop;
+    public event Action<IDataObject>? OnDataDrop;
     private bool isDragEnter = false;
 
     public ModernCard() {
@@ -71,12 +71,16 @@ namespace DropGoLine {
     protected override void OnDragLeave(EventArgs e) {
         base.OnDragLeave(e);
         isDragEnter = false;
+        // 確保離開時重置顏色並重繪
+        currentBorderColor = BorderColor; 
         this.Invalidate();
     }
 
     protected override void OnDragDrop(DragEventArgs e) {
         base.OnDragDrop(e);
         isDragEnter = false;
+        // 確保放下後重置顏色並重繪
+        currentBorderColor = BorderColor; 
         OnDataDrop?.Invoke(e.Data);
         this.Invalidate();
     }
@@ -95,16 +99,32 @@ namespace DropGoLine {
 
       // 🌟 MAGIC：使用 SourceCopy 模式，強制將 Alpha 值寫入
       e.Graphics.CompositingMode = CompositingMode.SourceCopy;
+      
+      // ⚠️ 關鍵修正：先清除整個畫布為透明，避免圓角外部有殘留像素
+      e.Graphics.Clear(Color.Transparent);
 
-      // 為了防止邊框被切掉，矩形要縮一點點
-      RectangleF rect = new RectangleF(0, 0, this.Width, this.Height);
+      // 為了防止邊框被切掉，矩形要內縮邊框的一半
+      float halfBorder = BorderSize / 2.0f;
+      RectangleF rect = new RectangleF(halfBorder, halfBorder, this.Width - BorderSize, this.Height - BorderSize);
 
       // 判斷是否正在拖曳中，調整邊框樣式
       Color targetBorderColor = isDragEnter ? Color.Cyan : currentBorderColor;
       float targetBorderSize = isDragEnter ? BorderSize + 2 : BorderSize;
+      
+      // 如果正在拖曳，邊框變粗，rect 需要再縮一點以免被切掉
+      if (isDragEnter) {
+          float extra = 1.0f; // 額外內縮量
+          rect.Inflate(-extra, -extra);
+      }
+      
       DashStyle targetDashStyle = isDragEnter ? DashStyle.Dash : DashStyle.Solid;
+      
+      // 動態計算合適的圓角大小，避免過大導致破圖
+      float minDimension = Math.Min(rect.Width, rect.Height);
+      float adjustedRadius = Math.Min(BorderRadius, minDimension / 2 - 1); 
+      if (adjustedRadius < 1) adjustedRadius = 1;
 
-      using (GraphicsPath path = GetRoundedPath(rect, BorderRadius))
+      using (GraphicsPath path = GetRoundedPath(rect, adjustedRadius))
       using (Pen pen = new Pen(targetBorderColor, targetBorderSize))
       using (SolidBrush brush = new SolidBrush(CardColor))
       {
@@ -117,6 +137,8 @@ namespace DropGoLine {
         e.Graphics.CompositingMode = CompositingMode.SourceOver;
 
         // 2. 畫邊框
+        // 只有當邊框大於 0 時才畫，且 Pen 必須設定 Alignment 為 Center (預設) 
+        // 我們的 rect 已經內縮了一半邊框，所以畫在中線上剛好是貼齊邊緣
         if (targetBorderSize > 0)
             e.Graphics.DrawPath(pen, path);
 
@@ -137,11 +159,11 @@ namespace DropGoLine {
     private GraphicsPath GetRoundedPath(RectangleF rect, float radius) {
       GraphicsPath path = new GraphicsPath();
       float diameter = radius * 2;
-
-      if (diameter > rect.Width)
-        diameter = rect.Width;
-      if (diameter > rect.Height)
-        diameter = rect.Height;
+      
+      // GetRoundedPath 內部不再需要縮小 diameter，因為傳入前已經處理過 adjustedRadius
+      // 但保留防呆以防萬一
+      if (diameter > rect.Width) diameter = rect.Width;
+      if (diameter > rect.Height) diameter = rect.Height;
 
       path.StartFigure();
       path.AddArc(rect.X, rect.Y, diameter, diameter, 180, 90);

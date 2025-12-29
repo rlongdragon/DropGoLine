@@ -66,6 +66,17 @@ namespace DropGoLine
       if (modernCard1 != null) {
           modernCard1.OnDataDrop += HandleDataDrop;
       }
+      
+      // 初始化測試狀態
+      UpdateMemberLayout(testCount);
+
+      // 處理視窗大小改變
+      this.Resize += (s, args) => UpdateMemberLayout(testCount);
+      
+      // 確保第一次顯示時佈局正確 (修正初次渲染邊距問題)
+      this.Shown += (s, args) => {
+          UpdateMemberLayout(testCount);
+      };
     }
 
     private void HandleDataDrop(IDataObject data) {
@@ -157,6 +168,116 @@ namespace DropGoLine
 
     private void textBox1_TextChanged(object sender, EventArgs e) {
 
+    }
+    private int testCount = 1;
+
+    private void btnTestLayout_Click(object sender, EventArgs e) {
+        testCount++;
+        if (testCount > 6) testCount = 0;
+        
+        UpdateMemberLayout(testCount);
+        btnTestLayout.Text = $"測試: {testCount}";
+    }
+
+    private LayoutAnimator animator = new LayoutAnimator();
+
+    private void UpdateMemberLayout(int count) {
+                // 為了讓視窗可以縮小，先重置最小尺寸限制，避免被之前的限制卡住
+        this.MinimumSize = new Size(0, 0); 
+        this.MaximumSize = new Size(0, 0); // 也要重置最大限制
+
+        if (count < 0) return; // 防呆
+
+        int w = pnlMembers.Width;
+        int h = pnlMembers.Height;
+        int gap = 10; // 間距 (與視窗邊緣保持一致)
+        
+        // --- 策略定義 ---
+        int rows = 1;
+        int cols = 1;
+
+        if (count <= 1) { count = (count == 0) ? 0 : 1; rows = 1; cols = 1; }
+        else if (count == 2) { rows = 2; cols = 1; }
+        else if (count == 3) { rows = 3; cols = 1; }
+        else if (count == 4) { rows = 2; cols = 2; }
+        else { rows = 3; cols = 2; } // 5 or 6
+
+        // --- 尺寸限制 ---
+        // 根據不同模式設定視窗的 Min/Max
+        int minW = (cols == 1) ? 200 : 350; 
+        int maxW = (cols == 1) ? 600 : 1000;
+
+        int minCardH = 60;
+        int topSectionH = modernCard1.Bottom + gap; 
+        int memberSectionMinH = (rows * minCardH) + ((rows - 1) * gap) + gap; 
+        int totalMinH = topSectionH + memberSectionMinH + (this.Height - this.ClientSize.Height); 
+        
+        this.MinimumSize = new Size(minW, totalMinH);
+        this.MaximumSize = new Size(maxW, 1200);
+
+        // --- 排版計算 ---
+        int totalGapW = (cols - 1) * gap;
+        int cardW = (w - totalGapW) / cols;
+
+        int topOffset = gap; 
+        int totalGapH = (rows - 1) * gap;
+        int availableH = h - topOffset; 
+        int cardH = (availableH - totalGapH) / rows;
+
+        if (cardH < 10) cardH = 10;
+
+        // --- 處理控制項 ---
+        
+        // 1. 補足不夠的卡片 (新增)
+        while (pnlMembers.Controls.Count < count) {
+            // 需要先知道這張卡片即將是第幾個，才能算出它的那一行在哪裡
+            int index = pnlMembers.Controls.Count; 
+            int row = index / cols; 
+            int col = index % cols; 
+            int targetX = col * (cardW + gap);
+            
+            ModernCard newCard = new ModernCard();
+            newCard.CardColor = Color.FromArgb(100, 50, 50, 50); 
+            newCard.BorderColor = Color.FromArgb(100, 255, 255, 255);
+            newCard.BorderRadius = 8;
+            newCard.BorderSize = 1;
+            
+            // 初始位置：X 軸對齊目標，Y 軸在視窗下方 -> 垂直滑入
+            newCard.Size = new Size(cardW, cardH);
+            newCard.Location = new Point(targetX, h + 50); 
+            
+            newCard.Anchor = AnchorStyles.Top | AnchorStyles.Left; 
+            pnlMembers.Controls.Add(newCard);
+            // 注意：剛加入的卡片沒有 Name 或特定識別，我們假設 Index 序就是成員序
+            newCard.Text = $"Member {pnlMembers.Controls.Count}";
+            newCard.BringToFront(); // 確保新加入的在最上層 (或依需求調整 Z-Order)
+        }
+
+        // 2. 移除多餘的卡片 (減少)
+        while (pnlMembers.Controls.Count > count) {
+             // 簡單起見，直接移除最後一個
+             // 未來可以做淡出動畫
+             pnlMembers.Controls.RemoveAt(pnlMembers.Controls.Count - 1);
+        }
+
+        // 3. 更新所有卡片的目標位置並啟動動畫
+        for (int i = 0; i < pnlMembers.Controls.Count; i++) {
+            // 修正排序問題：
+            // Controls[0] 是最新的 (Member N)，Controls[Count-1] 是最舊的 (Member 1)
+            // 我們希望 i=0 (左上角) 對應到 Member 1
+            Control card = pnlMembers.Controls[pnlMembers.Controls.Count - 1 - i];
+            
+            int row = i / cols; 
+            int col = i % cols; 
+
+            int targetX = col * (cardW + gap);
+            int targetY = topOffset + row * (cardH + gap);
+            
+            Rectangle targetBounds = new Rectangle(targetX, targetY, cardW, cardH);
+            
+            // 呼叫動畫管理器
+            animator.Animate(card, targetBounds);
+        }
     }
   }
 }
