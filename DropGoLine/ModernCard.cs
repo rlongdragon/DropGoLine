@@ -64,6 +64,43 @@ namespace DropGoLine {
         this.Invalidate();
     }
     private bool isDragEnter = false;
+    private Point dragStartPoint;
+    private bool isMouseDown = false;
+
+    protected override void OnMouseDown(MouseEventArgs e) {
+        base.OnMouseDown(e);
+        if (e.Button == MouseButtons.Left) {
+            isMouseDown = true;
+            dragStartPoint = e.Location;
+        }
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e) {
+        base.OnMouseMove(e);
+        if (isMouseDown && e.Button == MouseButtons.Left) {
+            // Check if moved enough to start drag
+            if (Math.Abs(e.X - dragStartPoint.X) > SystemInformation.DragSize.Width ||
+                Math.Abs(e.Y - dragStartPoint.Y) > SystemInformation.DragSize.Height) {
+                
+                string contentToDrag = "";
+                if (CurrentType == ContentType.Text && Tag is string text) {
+                    contentToDrag = text;
+                } else {
+                    contentToDrag = Text; // Fallback to display text
+                }
+
+                if (!string.IsNullOrEmpty(contentToDrag)) {
+                    isMouseDown = false; // Reset to avoid re-entry
+                    this.DoDragDrop(contentToDrag, DragDropEffects.Copy | DragDropEffects.Move);
+                }
+            }
+        }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e) {
+        base.OnMouseUp(e);
+        isMouseDown = false;
+    }
 
     public ModernCard() {
       this.DoubleBuffered = true;
