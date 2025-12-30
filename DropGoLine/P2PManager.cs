@@ -143,7 +143,7 @@ namespace DropGoLine {
         serverWriter = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
 
         string localIP = GetLocalIPAddress();
-        await serverWriter.WriteLineAsync($"REGISTER|{CurrentCode}|{localIP}|{localP2PPort}");
+        await serverWriter.WriteLineAsync($"REGISTER|{AppSettings.Current.DeviceName}|{localIP}|{localP2PPort}");
 
         _ = Task.Run(ReadServerMessages);
         _ = Task.Run(SendHeartbeat);
@@ -165,6 +165,10 @@ namespace DropGoLine {
           string cmd = parts[0];
           if (cmd == "MATCH" && parts.Length >= 5) {
             _ = ConnectToPeer(parts[3], int.Parse(parts[4]));
+            if (parts.Length >= 6) {
+                 string remoteName = parts[5];
+                 OnPeerConnected?.Invoke(this, remoteName);
+            }
           } else if (cmd == "RELAY" && parts.Length >= 3) {
             string sender = parts[1];
             string rawContent = string.Join("|", parts.Skip(2)); // Rejoin content in case it contains |
@@ -237,8 +241,17 @@ namespace DropGoLine {
       // FILE_REQ|{Filename}
       // FILE_PORT|{Port}
 
+
       var parts = payload.Split('|');
       string type = parts[0];
+
+      // Fix: Ensure peer is visible if we receive a message via relay (and we don't have a direct connection yet)
+      if (!string.IsNullOrEmpty(sender) && !directConnectedPeers.ContainsKey(sender)) {
+          // Fire event on main thread via Form1 invoke check, but here we just invoke the event
+          // The Form1 handles the duplicate check (ContainsKey)
+          OnPeerConnected?.Invoke(this, sender);
+      }
+
 
       if (type == "TEXT") {
         string text = parts.Length > 1 ? parts[1] : "";
@@ -315,6 +328,14 @@ namespace DropGoLine {
     public void BroadcastDirect(string targetName, string payload) {
       if (peerWriters.TryGetValue(targetName, out var writer)) {
         writer.WriteLine($"MSG|{CurrentCode}|{AppSettings.Current.DeviceName}|{payload}");
+      } else {
+        // Fallback to Relay
+        var parts = payload.Split('|');
+        if (parts.Length >= 1) {
+            string type = parts[0];
+            string content = parts.Length > 1 ? string.Join("|", parts.Skip(1)) : "";
+            Broadcast(type, content);
+        }
       }
     }
 
