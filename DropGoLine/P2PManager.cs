@@ -164,6 +164,9 @@ namespace DropGoLine {
 
           string cmd = parts[0];
           if (cmd == "MATCH" && parts.Length >= 5) {
+            // Try Public IP as well
+            if (parts.Length >= 3)
+                 _ = ConnectToPeer(parts[1], int.Parse(parts[2]));
             _ = ConnectToPeer(parts[3], int.Parse(parts[4]));
             if (parts.Length >= 6) {
                  string remoteName = parts[5];
@@ -173,6 +176,9 @@ namespace DropGoLine {
             string sender = parts[1];
             string rawContent = string.Join("|", parts.Skip(2)); // Rejoin content in case it contains |
             HandleIncomingMessage(sender, rawContent, false);
+          } else if (cmd == "DISCONNECT" && parts.Length >= 2) {
+             string targetName = parts[1];
+             OnPeerDisconnected?.Invoke(this, targetName);
           } else if (cmd == "CODE" && parts.Length >= 2) {
             CurrentCode = parts[1];
             OnIDChanged?.Invoke(this, CurrentCode);
