@@ -4,9 +4,9 @@ using System.Windows.Forms;
 
 namespace DropGoLine {
   public partial class ConnectionForm : Form {
-    private Label lblCode;
-    private TextBox txtCode;
-    private Button btnConnect;
+    private Label? lblCode;
+    private TextBox? txtCode;
+    private Button? btnConnect;
 
     public ConnectionForm() {
       InitializeComponent();
@@ -62,7 +62,8 @@ namespace DropGoLine {
       this.PerformLayout();
     }
 
-    private void BtnConnect_Click(object sender, EventArgs e) {
+    private void BtnConnect_Click(object? sender, EventArgs e) {
+      if (txtCode == null) return;
       string code = txtCode.Text;
       if (!string.IsNullOrWhiteSpace(code)) {
         P2PManager.Instance.Join(code);

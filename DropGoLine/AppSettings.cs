@@ -4,7 +4,8 @@ using System.Text.Json;
 
 namespace DropGoLine {
   public class AppSettings {
-    private static AppSettings _current;
+    private static AppSettings? _current;
+    
     public static AppSettings Current {
       get {
         if (_current == null) {
@@ -15,9 +16,8 @@ namespace DropGoLine {
     }
 
     public string ServerIP { get; set; } = "127.0.0.1";
-    public string DeviceName {
-      get; set;
-    }
+    
+    public string DeviceName { get; set; } = string.Empty;
 
     private static string ConfigPath => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
 

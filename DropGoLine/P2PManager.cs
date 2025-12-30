@@ -17,6 +17,7 @@ namespace DropGoLine {
     // Constants
     private const int SERVER_PORT = 8888;
     private const int HEARTBEAT_INTERVAL = 3000;
+    private const int FILE_CHUNK_SIZE = 4096; // 4KB for Base64 safety on Relay
 
     // State
     public string CurrentCode {
@@ -31,28 +32,38 @@ namespace DropGoLine {
     private ConcurrentDictionary<string, StreamWriter> peerWriters = new ConcurrentDictionary<string, StreamWriter>();
     private ConcurrentDictionary<string, bool> directConnectedPeers = new ConcurrentDictionary<string, bool>();
 
+    // File Transfer State
+    private TcpListener? fileServerListener;
+    private int fileServerPort;
+    private string? fileServerCurrentPath;
+
     // Events
     public event EventHandler<string>? OnIDChanged;
-    public event EventHandler<string>? OnMessageReceived;
+    public event EventHandler<P2PMessage>? OnMessageReceived; // Changed to structured message
     public event EventHandler<string>? OnPeerConnected;
     public event EventHandler<string>? OnPeerDisconnected;
+
+    public class P2PMessage {
+      public string Sender { get; set; } = "";
+      public ModernCard.ContentType Type {
+        get; set;
+      }
+      public string Content { get; set; } = ""; // Text or Filename
+      public object? Tag {
+        get; set;
+      } // Extra data (Size, etc)
+    }
 
     private P2PManager() {
     }
 
     public void Initialize(string serverIP) {
       this.ServerIP = serverIP;
-      this.CurrentCode = "Loading..."; // Wait for server to assign CODE
+      this.CurrentCode = "Loading...";
       OnIDChanged?.Invoke(this, this.CurrentCode);
-
-      // Start P2P Listener
       StartP2PListener();
-
-      // Connect to Server
       Task.Run(ConnectToServer);
     }
-
-
 
     private void StartP2PListener() {
       try {
@@ -61,7 +72,6 @@ namespace DropGoLine {
         localP2PPort = ((IPEndPoint)p2pListener.LocalEndpoint).Port;
         Task.Run(AcceptP2PClients);
       } catch (Exception ex) {
-        // Simplify error handling for now
         MessageBox.Show($"P2P Listener Error: {ex.Message}");
       }
     }
@@ -71,11 +81,58 @@ namespace DropGoLine {
         try {
           TcpClient client = await p2pListener.AcceptTcpClientAsync();
           _ = Task.Run(() => HandlePeer(client));
-        } catch {
-          break;
-        }
+        } catch { break; }
       }
     }
+
+    // === File Transfer Logic (Side Channel) ===
+    public int StartFileServer(string filePath) {
+      try {
+        if (fileServerListener == null) {
+          fileServerListener = new TcpListener(IPAddress.Any, 0);
+          fileServerListener.Start();
+          fileServerPort = ((IPEndPoint)fileServerListener.LocalEndpoint).Port;
+          Task.Run(AcceptFileClients);
+        }
+        fileServerCurrentPath = filePath;
+        return fileServerPort;
+      } catch { return -1; }
+    }
+
+    private async Task AcceptFileClients() {
+      while (fileServerListener != null) {
+        try {
+          TcpClient client = await fileServerListener.AcceptTcpClientAsync();
+          _ = Task.Run(() => ServeFile(client));
+        } catch { break; }
+      }
+    }
+
+    private async Task ServeFile(TcpClient client) {
+      try {
+        using NetworkStream ns = client.GetStream();
+        if (string.IsNullOrEmpty(fileServerCurrentPath) || !File.Exists(fileServerCurrentPath))
+          return;
+
+        byte[] fileBytes = await File.ReadAllBytesAsync(fileServerCurrentPath);
+        await ns.WriteAsync(fileBytes, 0, fileBytes.Length);
+      } catch { } finally { client.Close(); }
+    }
+
+    public async Task DownloadFileDirect(string host, int port, string savePath) {
+      try {
+        using TcpClient client = new TcpClient();
+        await client.ConnectAsync(host, port);
+        using NetworkStream ns = client.GetStream();
+        using FileStream fs = new FileStream(savePath, FileMode.Create, FileAccess.Write);
+        await ns.CopyToAsync(fs);
+        MessageBox.Show($"檔案下載完成: {savePath}", "成功");
+      } catch (Exception ex) {
+        MessageBox.Show($"下載失敗: {ex.Message}", "錯誤");
+      }
+    }
+
+    // === P2P & Server Logic ===
 
     private async Task ConnectToServer() {
       try {
@@ -85,25 +142,20 @@ namespace DropGoLine {
         serverReader = new StreamReader(stream, Encoding.UTF8);
         serverWriter = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
 
-        // Register
         string localIP = GetLocalIPAddress();
         await serverWriter.WriteLineAsync($"REGISTER|{CurrentCode}|{localIP}|{localP2PPort}");
 
-        // Start tasks
         _ = Task.Run(ReadServerMessages);
         _ = Task.Run(SendHeartbeat);
-
-        // Create Room immediately as per requirement (Auto-create own channel)
         await serverWriter.WriteLineAsync("CREATE");
 
-      } catch (Exception) {
-        // connection failed, seamless degradation to offline mode or retry logic
-      }
+      } catch { } // Offline mode
     }
 
     private async Task ReadServerMessages() {
       try {
-        if (serverReader == null) return;
+        if (serverReader == null)
+          return;
         string? line;
         while ((line = await serverReader.ReadLineAsync()) != null) {
           var parts = line.Split('|');
@@ -112,28 +164,17 @@ namespace DropGoLine {
 
           string cmd = parts[0];
           if (cmd == "MATCH" && parts.Length >= 5) {
-            string targetPubIP = parts[1];
-            int targetPubPort = int.Parse(parts[2]);
-            string targetLocIP = parts[3];
-            int targetLocPort = int.Parse(parts[4]);
-            // Try Connect P2P
-            _ = ConnectToPeer(targetLocIP, targetLocPort);
-            } else if (cmd == "RELAY" && parts.Length >= 3) {
+            _ = ConnectToPeer(parts[3], int.Parse(parts[4]));
+          } else if (cmd == "RELAY" && parts.Length >= 3) {
             string sender = parts[1];
-            string content = parts[2];
-            if (!directConnectedPeers.ContainsKey(sender)) {
-              OnMessageReceived?.Invoke(this, content);
-            }
+            string rawContent = string.Join("|", parts.Skip(2)); // Rejoin content in case it contains |
+            HandleIncomingMessage(sender, rawContent, false);
           } else if (cmd == "CODE" && parts.Length >= 2) {
-             // Server assigned a room code
-             string newCode = parts[1];
-             CurrentCode = newCode;
-             OnIDChanged?.Invoke(this, CurrentCode);
+            CurrentCode = parts[1];
+            OnIDChanged?.Invoke(this, CurrentCode);
           }
         }
-      } catch {
-        // Disconnected
-      }
+      } catch { }
     }
 
     private async Task ConnectToPeer(string ip, int port) {
@@ -141,58 +182,103 @@ namespace DropGoLine {
         TcpClient client = new TcpClient();
         await client.ConnectAsync(ip, port);
         _ = Task.Run(() => HandlePeer(client));
-      } catch {
-        // P2P connect failed
-      }
+      } catch { }
     }
 
     private async Task HandlePeer(TcpClient client) {
       string remoteName = "Unknown";
+      string remoteIP = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString();
       try {
         var stream = client.GetStream();
         var reader = new StreamReader(stream, Encoding.UTF8);
         var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
 
-        // Handshake
         await writer.WriteLineAsync($"NAME|{CurrentCode}|{AppSettings.Current.DeviceName}");
 
-        string line;
+        string? line;
         while ((line = await reader.ReadLineAsync()) != null) {
           var parts = line.Split('|');
           if (parts.Length == 0)
             continue;
 
           if (parts[0] == "NAME" && parts.Length >= 2) {
-            remoteName = parts[1].Trim();
-            if (parts.Length >= 3) remoteName = parts[2].Trim();
-            
+            remoteName = parts.Length >= 3 ? parts[2].Trim() : parts[1].Trim();
             if (!string.IsNullOrEmpty(remoteName)) {
-                peerWriters.TryAdd(remoteName, writer);
-                directConnectedPeers.TryAdd(remoteName, true);
-                // Trigger event
-                OnPeerConnected?.Invoke(this, remoteName);
+              peerWriters.TryAdd(remoteName, writer);
+              directConnectedPeers.TryAdd(remoteName, true);
+              OnPeerConnected?.Invoke(this, remoteName);
             }
-          } else if (parts[0] == "MSG" && parts.Length >= 4) {
-            string senderCode = parts[1];
-            string senderName = parts[2];
-            string content = parts[3];
-            OnMessageReceived?.Invoke(this, $"[{senderName}] {content}");
-          } else if (parts[0] == "MSG" && parts.Length == 3) {
-            // Fallback for old protocol
-            string sender = parts[1];
-            string content = parts[2];
-            OnMessageReceived?.Invoke(this, $"[{sender}] {content}");
+          } else if (parts[0] == "MSG") {
+            // MSG|Code|Name|Type|Content|Extra
+            // For compatibility with old peers, handle length differences
+            string content = "";
+            if (parts.Length >= 4) { // New format or Old format?
+                                     // Let's assume standard format: MSG|senderCode|senderName|...
+              string senderName = parts[2];
+              string msgPayload = string.Join("|", parts.Skip(3));
+              HandleIncomingMessage(senderName, msgPayload, true, remoteIP);
+            }
           }
         }
-      } catch {
-        // Peer disconnected
-      } finally {
+      } catch { } finally {
         if (remoteName != "Unknown") {
-            peerWriters.TryRemove(remoteName, out _);
-            directConnectedPeers.TryRemove(remoteName, out _);
-            OnPeerDisconnected?.Invoke(this, remoteName);
+          peerWriters.TryRemove(remoteName, out _);
+          directConnectedPeers.TryRemove(remoteName, out _);
+          OnPeerDisconnected?.Invoke(this, remoteName);
         }
         client.Close();
+      }
+    }
+
+    private void HandleIncomingMessage(string sender, string payload, bool isDirect, string fromIP = "") {
+      // Payload formats:
+      // TEXT|{Content}
+      // FILE_OFFER|{Filename}|{Size}
+      // FILE_REQ|{Filename}
+      // FILE_PORT|{Port}
+
+      var parts = payload.Split('|');
+      string type = parts[0];
+
+      if (type == "TEXT") {
+        string text = parts.Length > 1 ? parts[1] : "";
+        OnMessageReceived?.Invoke(this, new P2PMessage {
+          Sender = sender,
+          Type = ModernCard.ContentType.Text,
+          Content = text
+        });
+      } else if (type == "FILE_OFFER") {
+        string fname = parts.Length > 1 ? parts[1] : "Unknown";
+        string size = parts.Length > 2 ? parts[2] : "0";
+        OnMessageReceived?.Invoke(this, new P2PMessage {
+          Sender = sender,
+          Type = ModernCard.ContentType.File_Offer,
+          Content = fname,
+          Tag = size
+        });
+      } else if (type == "FILE_REQ") {
+        // Sender requested file, if we are the host, start server and reply port
+        // Safety check: verify we offered this file? For now just serve current.
+        int port = StartFileServer(fileServerCurrentPath); // Re-use invalid path just to get port? No, need state.
+                                                           // Simplification: Assume user just dragged a file, so it's in fileServerCurrentPath
+        BroadcastDirect(sender, $"FILE_PORT|{port}");
+      } else if (type == "FILE_PORT") {
+        int port = int.Parse(parts[1]);
+        // Auto download? Or trigger event?
+        // Usually we trigger event to let UI start download
+        OnMessageReceived?.Invoke(this, new P2PMessage {
+          Sender = sender,
+          Type = ModernCard.ContentType.File_Transferring,
+          Content = fromIP,
+          Tag = port
+        });
+      } else {
+        // Fallback for plain text from old peers or simple relays
+        OnMessageReceived?.Invoke(this, new P2PMessage {
+          Sender = sender,
+          Type = ModernCard.ContentType.Text,
+          Content = payload
+        });
       }
     }
 
@@ -201,63 +287,73 @@ namespace DropGoLine {
         try {
           await serverWriter.WriteLineAsync("PING");
           await Task.Delay(HEARTBEAT_INTERVAL);
-        } catch {
-          break;
-        }
+        } catch { break; }
+      }
+    }
+
+    public void Broadcast(string type, string content, string extra = "") {
+      string myName = AppSettings.Current.DeviceName;
+      string payload = $"{type}|{content}";
+      if (!string.IsNullOrEmpty(extra))
+        payload += $"|{extra}";
+
+      // 1. Send to Direct Peers
+      foreach (var kvp in peerWriters) {
+        try {
+          kvp.Value.WriteLine($"MSG|{CurrentCode}|{myName}|{payload}");
+        } catch { }
+      }
+
+      // 2. Send via Relay (Only Text and File Offers, Binary handled separately if implementation needed)
+      // If type is FILE_OFFER, we should probably encode file if we want Relay support.
+      // For now, we only support Side Channel for Files.
+      if (serverWriter != null && type != "FILE_REQ" && type != "FILE_PORT") {
+        serverWriter.WriteLine($"RELAY|{myName}: {payload}");
+      }
+    }
+
+    public void BroadcastDirect(string targetName, string payload) {
+      if (peerWriters.TryGetValue(targetName, out var writer)) {
+        writer.WriteLine($"MSG|{CurrentCode}|{AppSettings.Current.DeviceName}|{payload}");
       }
     }
 
     public void Join(string code) {
-      // Logic to switch room
-      if (serverWriter != null) {
+      if (serverWriter != null)
         serverWriter.WriteLine($"JOIN|{code}");
-        // Update Current ID if needed, or just keep own ID but in different room? 
-        // If the requirement is "Input code to Join", usually invalidates old room.
-        // We will update CurrentCode to reflect the joined room? 
-        // Actually, usually user ID != Room ID. 
-        // But user specified "connection ID" which implies Channel ID.
-        // Let's assume for now we join that room.
-      }
     }
-
     public void Disconnect() {
-      // Basic disconnect logic
       try {
-        serverWriter?.Close();
-        serverReader?.Close();
         serverClient?.Close();
-        // clear peers?
       } catch { }
     }
 
-        public void Broadcast(string content) {
-            string myName = AppSettings.Current.DeviceName;
-            // 1. Send to all P2P peers
-            foreach (var kvp in peerWriters) {
-                try {
-                    // MSG|Code|DeviceName|Content
-                    kvp.Value.WriteLine($"MSG|{CurrentCode}|{myName}|{content}");
-                } catch { }
-            }
+    private string GetLocalIPAddress() {
+      try {
+        using (Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)) {
+          // Connect to the Server IP to see which local interface is used.
+          // If ServerIP is loopback, it returns loopback. 
+          // If ServerIP is external, it returns the LAN IP.
+          // We use port 80 just for the route lookup (no actual packet sent).
+          IPAddress target = IPAddress.Loopback; // Placeholder
+          if (IPAddress.TryParse(ServerIP, out var ip))
+            target = ip;
+          else
+            target = IPAddress.Parse("8.8.8.8"); // Fallback to Google DNS to find Internet-facing IP
 
-            // 2. Send Relay to Server
-            if (serverWriter != null) {
-                 // RELAY|Content (Server adds name? No, server logic is fixed)
-                 // Server RELAY format: RELAY|SenderID|Content
-                 // We will pack name into content for RELAY fallback or accept Server Limit
-                 // For now, let's keep RELAY simple content, or prefix it:
-                 // "DeviceName: Content"
-                 serverWriter.WriteLine($"RELAY|{myName}: {content}");
-            }
-        }private string GetLocalIPAddress() {
-      // Simplified local IP logic
-      var host = Dns.GetHostEntry(Dns.GetHostName());
-      foreach (var ip in host.AddressList) {
-        if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip)) {
-          return ip.ToString();
+          socket.Connect(target, 65530);
+          IPEndPoint? endPoint = socket.LocalEndPoint as IPEndPoint;
+          return endPoint?.Address.ToString() ?? "127.0.0.1";
         }
+      } catch {
+        // Fallback to old method if socket fails
+        var host = Dns.GetHostEntry(Dns.GetHostName());
+        foreach (var ip in host.AddressList) {
+          if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
+            return ip.ToString();
+        }
+        return "127.0.0.1";
       }
-      return "127.0.0.1";
     }
   }
 }

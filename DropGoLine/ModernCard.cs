@@ -31,13 +31,37 @@ namespace DropGoLine {
     public Color BorderColor { get; set; } = Color.FromArgb(50, 255, 255, 255); // 預設微亮邊框
 
     [Category("Appearance")]
-    [Description("設定滑鼠懸停時的邊框顏色")]
-    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    [Description("滑鼠懸停時的邊框顏色")]
     public Color HoverBorderColor { get; set; } = Color.FromArgb(100, 255, 255, 255);
 
     private Color currentBorderColor;
+    
+    // 用於儲存傳輸資料 (例如檔案路徑或文字內容)
+    // Tag 屬性來自 Control 基底類別，我們直接使用它
+
+    public enum ContentType {
+        None,
+        Text,
+        File_Offer,
+        File_Request,
+        File_Transferring
+    }
+    
+    public ContentType CurrentType { get; private set; } = ContentType.None;
 
     public event Action<IDataObject>? OnDataDrop;
+    
+    public void SetContent(string displayText, ContentType type, object? data) {
+        this.Text = displayText;
+        this.CurrentType = type;
+        this.Tag = data; 
+        
+        // 根據類型變更樣式 (可選)
+        if (type == ContentType.File_Offer) {
+           // 例如變更文字顏色或加前綴
+        }
+        this.Invalidate();
+    }
     private bool isDragEnter = false;
 
     public ModernCard() {
