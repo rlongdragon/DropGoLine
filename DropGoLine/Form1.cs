@@ -278,6 +278,9 @@ namespace DropGoLine {
       }
     }
 
+    
+    private void Form1_Load(object? sender, EventArgs e) { }
+
     private void AddMember(string name) {
       if (this.InvokeRequired) {
         this.Invoke(new Action<string>(AddMember), name);
