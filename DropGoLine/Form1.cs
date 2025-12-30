@@ -360,26 +360,26 @@ namespace DropGoLine {
       if (data.GetDataPresent(DataFormats.FileDrop)) {
         string[]? files = (string[]?)data.GetData(DataFormats.FileDrop);
         if (files != null && files.Length > 0) {
-          string path = files[0];
-          string fname = System.IO.Path.GetFileName(path);
-          long size = new System.IO.FileInfo(path).Length;
-
-          // 1. Start hosting this file
-          P2PManager.Instance.StartFileServer(path);
-
-          // 2. Broadcast Offer
-          P2PManager.Instance.Broadcast("FILE_OFFER", fname, size.ToString());
-
-          // 3. Update Self UI (Optional, maybe show what we are sharing)
-          // modernCard1.SetContent($"Sharing: {fname}", ModernCard.ContentType.File_Transferring, path);
+            ProcessFileDrop(files[0]);
         }
       } else if (data.GetDataPresent(DataFormats.Text)) {
         string text = data.GetData(DataFormats.Text) as string ?? "";
         if (!string.IsNullOrEmpty(text)) {
-          P2PManager.Instance.Broadcast("Text", text);
-          // Update Self UI? Maybe not needed as we just dragged it.
+           // Robustness: If text is a valid file path, treat as File Offer
+           if (System.IO.File.Exists(text)) {
+               ProcessFileDrop(text);
+           } else {
+               P2PManager.Instance.Broadcast("TEXT", text);
+           }
         }
       }
+    }
+
+    private void ProcessFileDrop(string path) {
+          string fname = System.IO.Path.GetFileName(path);
+          long size = new System.IO.FileInfo(path).Length;
+          P2PManager.Instance.StartFileServer(path);
+          P2PManager.Instance.Broadcast("FILE_OFFER", fname, size.ToString());
     }
 
     private void RemoveMember(string name) {

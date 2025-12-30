@@ -321,7 +321,7 @@ namespace DropGoLine {
       // If type is FILE_OFFER, we should probably encode file if we want Relay support.
       // For now, we only support Side Channel for Files.
       if (serverWriter != null && type != "FILE_REQ" && type != "FILE_PORT") {
-        serverWriter.WriteLine($"RELAY|{myName}: {payload}");
+        serverWriter.WriteLine($"RELAY|{payload}");
       }
     }
 
