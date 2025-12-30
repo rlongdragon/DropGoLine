@@ -126,10 +126,81 @@ namespace DropGoLine {
         using NetworkStream ns = client.GetStream();
         using FileStream fs = new FileStream(savePath, FileMode.Create, FileAccess.Write);
         await ns.CopyToAsync(fs);
-        MessageBox.Show($"檔案下載完成: {savePath}", "成功");
+        MessageBox.Show($"檔案下載完成 (直連): {savePath}", "成功");
       } catch (Exception ex) {
-        MessageBox.Show($"下載失敗: {ex.Message}", "錯誤");
+        MessageBox.Show($"直連下載失敗: {ex.Message}", "錯誤");
       }
+    }
+
+    public async Task StartRelaySender(string targetPeer, string filePath) {
+        try {
+            if (!File.Exists(filePath)) return;
+            
+            if (!File.Exists(filePath)) return;
+            
+            // 1. Generate TransID
+            string transId = Guid.NewGuid().ToString("N");
+            long fileSize = new FileInfo(filePath).Length;
+
+            // 2. Connect to Server for Channel
+            TcpClient relayClient = new TcpClient();
+            await relayClient.ConnectAsync(ServerIP, SERVER_PORT);
+            NetworkStream ns = relayClient.GetStream();
+            StreamWriter writer = new StreamWriter(ns, Encoding.UTF8) { AutoFlush = true };
+
+            // 3. Register Channel
+            await writer.WriteLineAsync($"CHANNEL_CREATE|{transId}");
+            
+            // Wait for ACK "RELAY_WAIT" to ensure Server is ready and not buffering our future data
+            // Use Byte-by-Byte reading to avoid buffering issues
+            string ack = await ReadLineByteByByteAsync(ns);
+            if (ack != "RELAY_WAIT") throw new Exception($"Server ACK Failed: {ack}");
+
+            // 4. Notify Peer "FILE_RELAY_READY|TransID|Filename|Size"
+            string fname = Path.GetFileName(filePath);
+            BroadcastDirect(targetPeer, $"FILE_RELAY_READY|{transId}|{fname}|{fileSize}");
+
+            // 5. Send File Data
+            // We do this in a separate task or await? 
+            // If we await, we hold the connection open. Bridge will activate when peer joins.
+            // We just pump data.
+            using (FileStream fs = File.OpenRead(filePath)) {
+                await fs.CopyToAsync(ns);
+            }
+            
+            // 6. Close
+            relayClient.Close();
+        } catch (Exception ex) {
+           MessageBox.Show($"Relay 發送錯誤: {ex.Message}");
+        }
+    }
+
+    public async Task StartRelayReceiver(string transId, string savePath) {
+        try {
+            // 1. Connect to Server
+            TcpClient relayClient = new TcpClient();
+            await relayClient.ConnectAsync(ServerIP, SERVER_PORT);
+            NetworkStream ns = relayClient.GetStream();
+            StreamWriter writer = new StreamWriter(ns, Encoding.UTF8) { AutoFlush = true };
+
+            // 2. Join Channel
+            await writer.WriteLineAsync($"CHANNEL_JOIN|{transId}");
+
+            // Wait for ACK "RELAY_START"
+            // Use Byte-by-Byte reading to avoid buffering issues (CRITICAL)
+            string ack = await ReadLineByteByByteAsync(ns);
+            if (ack != "RELAY_START") throw new Exception($"Server ACK Failed: {ack}");
+
+            // 3. Receive Data
+            using (FileStream fs = new FileStream(savePath, FileMode.Create, FileAccess.Write)) {
+                await ns.CopyToAsync(fs);
+            }
+
+            relayClient.Close();
+            MessageBox.Show($"檔案下載完成 (中繼): {savePath}", "成功");
+        } catch (Exception ex) {
+            MessageBox.Show($"Relay 接收錯誤: {ex.Message}");
+        }
     }
 
     // === P2P & Server Logic ===
@@ -246,6 +317,7 @@ namespace DropGoLine {
       // FILE_OFFER|{Filename}|{Size}
       // FILE_REQ|{Filename}
       // FILE_PORT|{Port}
+      // FILE_RELAY_READY|{TransID}|{Filename}|{Size}
 
 
       var parts = payload.Split('|');
@@ -276,11 +348,30 @@ namespace DropGoLine {
           Tag = size
         });
       } else if (type == "FILE_REQ") {
-        // Sender requested file, if we are the host, start server and reply port
-        // Safety check: verify we offered this file? For now just serve current.
-        int port = StartFileServer(fileServerCurrentPath); // Re-use invalid path just to get port? No, need state.
-                                                           // Simplification: Assume user just dragged a file, so it's in fileServerCurrentPath
-        BroadcastDirect(sender, $"FILE_PORT|{port}");
+        // Sender requested file.
+        // STRATEGY: Prefer Relay for reliability given the user's request.
+        // But we can fallback to Direct if needed. For now, Force Relay for consistency as requested.
+        
+        string reqFile = parts.Length > 1 ? parts[1] : "";
+        string sendPath = fileServerCurrentPath; // Simplified: assume last offered file
+        
+        // If specific logic needed to find file, add here.
+        if (!string.IsNullOrEmpty(sendPath) && File.Exists(sendPath)) {
+             // Trigger Relay Sender
+             _ = Task.Run(() => StartRelaySender(sender, sendPath));
+        }
+      } else if (type == "FILE_RELAY_READY") {
+          // FILE_RELAY_READY|TransID|Filename|Size
+          string transId = parts[1];
+          string fname = parts[2];
+          // string size = parts[3];
+          
+          OnMessageReceived?.Invoke(this, new P2PMessage {
+            Sender = sender,
+            Type = ModernCard.ContentType.File_Transferring,
+            Content = fname,
+            Tag = transId // Pass TransID string
+          });
       } else if (type == "FILE_PORT") {
         int port = int.Parse(parts[1]);
         // Auto download? Or trigger event?
@@ -326,7 +417,7 @@ namespace DropGoLine {
       // 2. Send via Relay (Only Text and File Offers, Binary handled separately if implementation needed)
       // If type is FILE_OFFER, we should probably encode file if we want Relay support.
       // For now, we only support Side Channel for Files.
-      if (serverWriter != null && type != "FILE_REQ" && type != "FILE_PORT") {
+      if (serverWriter != null && type != "FILE_PORT") {
         serverWriter.WriteLine($"RELAY|{payload}");
       }
     }
@@ -381,6 +472,19 @@ namespace DropGoLine {
         }
         return "127.0.0.1";
       }
+    }
+    // Helper: Read line byte-by-byte to avoid StreamReader buffering eating subsequent binary data
+    // This is ONLY used for short handshake messages (approx 10-20 bytes).
+    // Large file transfers still use efficient CopyToAsync.
+    private async Task<string> ReadLineByteByByteAsync(NetworkStream stream) {
+        StringBuilder sb = new StringBuilder();
+        byte[] buffer = new byte[1];
+        while (await stream.ReadAsync(buffer, 0, 1) > 0) {
+            char c = (char)buffer[0];
+            if (c == '\n') break;
+            if (c != '\r') sb.Append(c);
+        }
+        return sb.ToString();
     }
   }
 }

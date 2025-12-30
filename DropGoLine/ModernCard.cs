@@ -32,6 +32,7 @@ namespace DropGoLine {
 
     [Category("Appearance")]
     [Description("滑鼠懸停時的邊框顏色")]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
     public Color HoverBorderColor { get; set; } = Color.FromArgb(100, 255, 255, 255);
 
     private Color currentBorderColor;

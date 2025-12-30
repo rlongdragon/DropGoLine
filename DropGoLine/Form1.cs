@@ -132,12 +132,18 @@ namespace DropGoLine {
             }
           }
 
-          // Handle File Port Response (Trigger Download)
+          // Handle File Port/Relay Response (Trigger Download)
           if (msg.Type == ModernCard.ContentType.File_Transferring && !string.IsNullOrEmpty(pendingSavePath)) {
-            int port = (int)(msg.Tag ?? 0);
-            string ip = msg.Content; // Content stores IP in this case
-                                     // Start Download Task
-            _ = P2PManager.Instance.DownloadFileDirect(ip, port, pendingSavePath);
+            
+            if (msg.Tag is string transId) {
+                // Relay Mode
+                _ = P2PManager.Instance.StartRelayReceiver(transId, pendingSavePath);
+            } else if (msg.Tag is int port) {
+                // Direct Mode
+                 string ip = msg.Content; // Content stores IP in this case
+                 _ = P2PManager.Instance.DownloadFileDirect(ip, port, pendingSavePath);
+            }
+
             pendingSavePath = null; // Reset
           }
         }));
