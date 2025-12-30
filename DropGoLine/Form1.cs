@@ -368,8 +368,15 @@ namespace DropGoLine {
         if (files != null && files.Length > 0) {
             ProcessFileDrop(files[0]);
         }
-      } else if (data.GetDataPresent(DataFormats.Text)) {
-        string text = data.GetData(DataFormats.Text) as string ?? "";
+      } else {
+        // Fix: Creating priority for UnicodeText to avoid ANSI corruption (garbled text)
+        string text = "";
+        if (data.GetDataPresent(DataFormats.UnicodeText)) {
+             text = data.GetData(DataFormats.UnicodeText) as string ?? "";
+        } else if (data.GetDataPresent(DataFormats.Text)) {
+             text = data.GetData(DataFormats.Text) as string ?? "";
+        }
+
         if (!string.IsNullOrEmpty(text)) {
            // Robustness: If text is a valid file path, treat as File Offer
            if (System.IO.File.Exists(text)) {

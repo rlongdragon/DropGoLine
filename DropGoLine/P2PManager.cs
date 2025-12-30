@@ -146,7 +146,7 @@ namespace DropGoLine {
             TcpClient relayClient = new TcpClient();
             await relayClient.ConnectAsync(ServerIP, SERVER_PORT);
             NetworkStream ns = relayClient.GetStream();
-            StreamWriter writer = new StreamWriter(ns, Encoding.UTF8) { AutoFlush = true };
+            StreamWriter writer = new StreamWriter(ns, new UTF8Encoding(false)) { AutoFlush = true };
 
             // 3. Register Channel
             await writer.WriteLineAsync($"CHANNEL_CREATE|{transId}");
@@ -181,7 +181,7 @@ namespace DropGoLine {
             TcpClient relayClient = new TcpClient();
             await relayClient.ConnectAsync(ServerIP, SERVER_PORT);
             NetworkStream ns = relayClient.GetStream();
-            StreamWriter writer = new StreamWriter(ns, Encoding.UTF8) { AutoFlush = true };
+            StreamWriter writer = new StreamWriter(ns, new UTF8Encoding(false)) { AutoFlush = true };
 
             // 2. Join Channel
             await writer.WriteLineAsync($"CHANNEL_JOIN|{transId}");
@@ -211,7 +211,7 @@ namespace DropGoLine {
         await serverClient.ConnectAsync(ServerIP, SERVER_PORT);
         var stream = serverClient.GetStream();
         serverReader = new StreamReader(stream, Encoding.UTF8);
-        serverWriter = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
+        serverWriter = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
 
         string localIP = GetLocalIPAddress();
         await serverWriter.WriteLineAsync($"REGISTER|{AppSettings.Current.DeviceName}|{localIP}|{localP2PPort}");
@@ -272,7 +272,7 @@ namespace DropGoLine {
       try {
         var stream = client.GetStream();
         var reader = new StreamReader(stream, Encoding.UTF8);
-        var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
+        var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
 
         await writer.WriteLineAsync($"NAME|{CurrentCode}|{AppSettings.Current.DeviceName}");
 
