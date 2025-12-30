@@ -56,8 +56,7 @@ namespace DropGoLine {
     private int prevCols = 1; // Track previous column count
 
     private LayoutAnimator animator = new LayoutAnimator();
-    private int testCount = 1;
-
+    // testCount removed
 
     public Form1() {
       InitializeComponent();
@@ -74,6 +73,11 @@ namespace DropGoLine {
       widthAnimTimer = new System.Windows.Forms.Timer();
       widthAnimTimer.Interval = 15; // ~60 FPS
       widthAnimTimer.Tick += WidthAnimTimer_Tick;
+
+      // Wire up Context Menu Events
+      建立連線ToolStripMenuItem.Click += 建立連線ToolStripMenuItem_Click;
+      斷開連線ToolStripMenuItem.Click += 斷開連線ToolStripMenuItem_Click;
+      其他設定ToolStripMenuItem.Click += 其他設定ToolStripMenuItem_Click;
     }
 
     protected override void OnHandleCreated(EventArgs e) {
@@ -103,14 +107,36 @@ namespace DropGoLine {
         modernCard1.OnDataDrop += HandleDataDrop;
       }
 
-      UpdateMemberLayout(testCount);
+      UpdateMemberLayout();
 
       this.Resize += (s, args) => {
         if (!widthAnimTimer.Enabled)
-          UpdateMemberLayout(testCount);
+          UpdateMemberLayout();
       };
 
-      this.Shown += (s, args) => UpdateMemberLayout(testCount);
+      this.Shown += (s, args) => UpdateMemberLayout();
+
+      // Initialize AppSettings and P2PManager
+      string serverIP = AppSettings.Current.ServerIP;
+      P2PManager.Instance.OnIDChanged += (s, id) => {
+          this.Invoke((MethodInvoker)(() => toolStripMenuItemID.Text = $"ID: {id}"));
+      };
+      
+      P2PManager.Instance.OnMessageReceived += (s, msg) => {
+          this.Invoke((MethodInvoker)(() => {
+             MessageBox.Show($"收到訊息:\n{msg}", "P2P 同步", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          }));
+      };
+
+      P2PManager.Instance.OnPeerConnected += (s, name) => {
+          AddMember(name);
+      };
+
+      P2PManager.Instance.OnPeerDisconnected += (s, name) => {
+          RemoveMember(name);
+      };
+
+      P2PManager.Instance.Initialize(serverIP);
     }
 
     protected override void WndProc(ref Message m) {
@@ -210,26 +236,60 @@ namespace DropGoLine {
         }
       }
     }
+    
+    private void AddMember(string name) {
+        if (this.InvokeRequired) {
+            this.Invoke(new Action<string>(AddMember), name);
+            return;
+        }
+
+        if (pnlMembers.Controls.ContainsKey(name)) return;
+        
+        ModernCard newCard = new ModernCard();
+        newCard.Name = name; // Use name as Key
+        newCard.CardColor = Color.FromArgb(100, 50, 50, 50);
+        newCard.BorderColor = Color.FromArgb(100, 255, 255, 255);
+        newCard.BorderRadius = 8;
+        newCard.BorderSize = 1;
+        newCard.Size = new Size(200, 60); 
+        newCard.Text = name;
+        newCard.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        newCard.Visible = true; // Ensure visible
+        
+        pnlMembers.Controls.Add(newCard);
+        newCard.BringToFront(); 
+        
+        // Force layout update immediately
+        UpdateMemberLayout();
+        this.Refresh();
+    }
+
+    private void RemoveMember(string name) {
+        if (this.InvokeRequired) {
+            this.Invoke(new Action<string>(RemoveMember), name);
+            return;
+        }
+
+        if (pnlMembers.Controls.ContainsKey(name)) {
+            pnlMembers.Controls.RemoveByKey(name);
+            UpdateMemberLayout();
+            this.Refresh();
+        }
+    }
 
     // === Layout & Logic ===
 
-    private void btnTestLayout_Click(object sender, EventArgs e) {
-      testCount++;
-      if (testCount > 6) testCount = 0;
-      UpdateMemberLayout(testCount);
-      btnTestLayout.Text = $"測試: {testCount}";
-    }
-
-    private void UpdateMemberLayout(int count) {
+    private void UpdateMemberLayout() {
+      int count = pnlMembers.Controls.Count;
       this.MinimumSize = new Size(0, 0);
       this.MaximumSize = new Size(0, 0);
 
-      if (count < 0) return;
+      if (count == 0) return;
 
       int rows = 1;
       int cols = 1;
 
-      if (count <= 1) { count = (count == 0) ? 0 : 1; rows = 1; cols = 1; }
+      if (count <= 1) { rows = 1; cols = 1; }
       else if (count == 2) { rows = 2; cols = 1; }
       else if (count == 3) { rows = 3; cols = 1; }
       else if (count == 4) { rows = 2; cols = 2; }
@@ -274,32 +334,11 @@ namespace DropGoLine {
       int cardH = (availableH - totalGapH) / rows;
       if (cardH < 10) cardH = 10;
 
-      // Create Cards
-      while (pnlMembers.Controls.Count < count) {
-        // 修正：計算新卡片的目標位置，讓它從垂直正下方生成
-        int newIndex = pnlMembers.Controls.Count;
-        int newRow = newIndex / cols;
-        int newCol = newIndex % cols;
-        int newTargetX = newCol * (cardW + gap);
-        
-        ModernCard newCard = new ModernCard();
-        newCard.CardColor = Color.FromArgb(100, 50, 50, 50);
-        newCard.BorderColor = Color.FromArgb(100, 255, 255, 255);
-        newCard.BorderRadius = 8;
-        newCard.BorderSize = 1;
-        newCard.Size = new Size(cardW, cardH);
-        // 設定初始位置為 TargetX 的正下方
-        newCard.Location = new Point(newTargetX, h + 50);
-        newCard.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-        newCard.Text = $"Member {pnlMembers.Controls.Count + 1}";
-        pnlMembers.Controls.Add(newCard);
-        newCard.BringToFront();
-      }
+      // Create Cards - Removed for Dynamic Logic
+      // Cards are added via AddMember
 
-      // Remove Cards
-      while (pnlMembers.Controls.Count > count) {
-        pnlMembers.Controls.RemoveAt(pnlMembers.Controls.Count - 1);
-      }
+      // Remove Cards - Removed for Dynamic Logic
+      // Cards are removed via RemoveMember
 
       // Update positions - Reverse Order 1-2-3-4
       for (int i = 0; i < pnlMembers.Controls.Count; i++) {
@@ -321,7 +360,7 @@ namespace DropGoLine {
       }
     }
 
-    private void WidthAnimTimer_Tick(object sender, EventArgs e) {
+    private void WidthAnimTimer_Tick(object? sender, EventArgs e) {
       int currentW = this.Width;
       
       this.Invalidate(); 
@@ -329,23 +368,62 @@ namespace DropGoLine {
       if (Math.Abs(targetWindowWidth - currentW) <= 2) {
         this.Width = targetWindowWidth;
         widthAnimTimer.Stop();
-        UpdateMemberLayout(testCount);
+        UpdateMemberLayout();
       } else {
         int nextW = currentW + (int)((targetWindowWidth - currentW) * 0.15);
         if (nextW == currentW) nextW += (targetWindowWidth > currentW) ? 1 : -1;
         this.Width = nextW;
       }
-      UpdateMemberLayout(testCount);
+      UpdateMemberLayout();
+    }
+
+    private void ToolStripMenuItemID_Click(object? sender, EventArgs e) {
+        if (!string.IsNullOrEmpty(P2PManager.Instance.CurrentCode)) {
+            Clipboard.SetText(P2PManager.Instance.CurrentCode);
+            MessageBox.Show("ID 已複製到剪貼簿", "提示");
+        }
     }
 
     private void HandleDataDrop(IDataObject data) {
-      MessageBox.Show("收到拖曳資料", "DragDrop");
+      string? contentToSend = null;
+
+      if (data.GetDataPresent(DataFormats.FileDrop)) {
+          string[]? files = (string[]?)data.GetData(DataFormats.FileDrop);
+          if (files != null && files.Length > 0) {
+              contentToSend = files[0];
+          }
+      }
+      else if (data.GetDataPresent(DataFormats.Text)) {
+          contentToSend = data.GetData(DataFormats.Text) as string;
+      }
+
+      if (!string.IsNullOrEmpty(contentToSend)) {
+          P2PManager.Instance.Broadcast(contentToSend);
+      }
+      MessageBox.Show("資料已廣播 (P2P)", "提示");
     }
 
-    private void Form1_Load(object sender, EventArgs e) { }
-    private void 開啟拖曳板ToolStripMenuItem_Click(object sender, EventArgs e) { ShowForm(); }
-    private void 關閉拖曳板ToolStripMenuItem_Click(object sender, EventArgs e) { this.Hide(); }
-    private void 結束ToolStripMenuItem1_Click(object sender, EventArgs e) { Application.Exit(); }
+    private void Form1_Load(object? sender, EventArgs e) { }
+    private void 開啟拖曳板ToolStripMenuItem_Click(object? sender, EventArgs e) { ShowForm(); }
+    private void 關閉拖曳板ToolStripMenuItem_Click(object? sender, EventArgs e) { this.Hide(); }
+    private void 建立連線ToolStripMenuItem_Click(object? sender, EventArgs e) {
+        using (var form = new ConnectionForm()) {
+            form.ShowDialog();
+        }
+    }
+
+    private void 斷開連線ToolStripMenuItem_Click(object? sender, EventArgs e) {
+        P2PManager.Instance.Disconnect(); // Assume Disconnect method exists or just placeholder
+        MessageBox.Show("已嘗試斷開連線 (功能待完善)", "訊息");
+    }
+
+    private void 其他設定ToolStripMenuItem_Click(object? sender, EventArgs e) {
+        using (var form = new SettingsForm()) {
+            form.ShowDialog();
+        }
+    }
+
+    private void 結束ToolStripMenuItem1_Click(object? sender, EventArgs e) { Application.Exit(); }
     private void ShowForm() {
       this.Show();
       this.WindowState = FormWindowState.Normal;

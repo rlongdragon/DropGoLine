@@ -16,11 +16,11 @@ namespace DropGoLine {
 
     // 記錄每個控制項的動畫狀態
     private class AnimationInfo {
-      public Control TargetControl;
+      public Control TargetControl = null!; // Suppress warning, assigned in Animate
       public Rectangle StartBounds;
       public Rectangle EndBounds;
       public long StartTime;
-      public float Delay; // 延遲啟動 (可選)
+      public float Delay = 0f; // Assign default
     }
 
     private List<AnimationInfo> activeAnimations = new List<AnimationInfo>();
@@ -45,7 +45,8 @@ namespace DropGoLine {
         TargetControl = control,
         StartBounds = control.Bounds,
         EndBounds = targetBounds,
-        StartTime = DateTime.Now.Ticks / TimeSpan.TicksPerMillisecond
+        StartTime = DateTime.Now.Ticks / TimeSpan.TicksPerMillisecond,
+        Delay = 0
       };
 
       activeAnimations.Add(info);
@@ -56,7 +57,7 @@ namespace DropGoLine {
       }
     }
 
-    private void AnimationTimer_Tick(object sender, EventArgs e) {
+    private void AnimationTimer_Tick(object? sender, EventArgs e) {
       long now = DateTime.Now.Ticks / TimeSpan.TicksPerMillisecond;
 
       // 倒序走訪以便安全移除完成的動畫

@@ -27,6 +27,7 @@
       System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
       notifyIcon = new NotifyIcon(components);
       contextMenuStrip1 = new ContextMenuStrip(components);
+      toolStripMenuItemID = new ToolStripMenuItem();
       開啟拖曳板ToolStripMenuItem = new ToolStripMenuItem();
       關閉拖曳板ToolStripMenuItem = new ToolStripMenuItem();
       結束ToolStripMenuItem = new ToolStripMenuItem();
@@ -37,7 +38,6 @@
       panel1 = new Panel();
       pnlMembers = new Panel();
       modernCard1 = new ModernCard();
-      btnTestLayout = new Button();
       contextMenuStrip1.SuspendLayout();
       panel1.SuspendLayout();
       modernCard1.SuspendLayout();
@@ -53,10 +53,17 @@
       // contextMenuStrip1
       // 
       contextMenuStrip1.ImeMode = ImeMode.NoControl;
-      contextMenuStrip1.Items.AddRange(new ToolStripItem[] { 開啟拖曳板ToolStripMenuItem, 關閉拖曳板ToolStripMenuItem, 結束ToolStripMenuItem, 結束ToolStripMenuItem1 });
+      contextMenuStrip1.Items.AddRange(new ToolStripItem[] { toolStripMenuItemID, 開啟拖曳板ToolStripMenuItem, 關閉拖曳板ToolStripMenuItem, 結束ToolStripMenuItem, 結束ToolStripMenuItem1 });
       contextMenuStrip1.Name = "contextMenuStrip1";
       contextMenuStrip1.RenderMode = ToolStripRenderMode.System;
-      contextMenuStrip1.Size = new Size(135, 92);
+      contextMenuStrip1.Size = new Size(135, 114);
+      // 
+      // toolStripMenuItemID
+      // 
+      toolStripMenuItemID.Name = "toolStripMenuItemID";
+      toolStripMenuItemID.Size = new Size(134, 22);
+      toolStripMenuItemID.Text = "ID: 載入中...";
+      toolStripMenuItemID.Click += ToolStripMenuItemID_Click;
       // 
       // 開啟拖曳板ToolStripMenuItem
       // 
@@ -122,6 +129,7 @@
       pnlMembers.Size = new Size(318, 310);
       pnlMembers.TabIndex = 2;
       // 
+      // 
       // modernCard1
       // 
       modernCard1.AllowDrop = true;
@@ -130,7 +138,6 @@
       modernCard1.BorderRadius = 10;
       modernCard1.BorderSize = 1;
       modernCard1.CardColor = Color.FromArgb(100, 40, 40, 40);
-      modernCard1.Controls.Add(btnTestLayout);
       modernCard1.Dock = DockStyle.Top;
       modernCard1.ForeColor = Color.White;
       modernCard1.HoverBorderColor = Color.FromArgb(100, 255, 255, 255);
@@ -141,15 +148,8 @@
       modernCard1.Text = "將選取拖曳到這個區塊";
       modernCard1.Paint += modernCard1_Paint;
       // 
-      // btnTestLayout
+      // btnTestLayout REMOVED
       // 
-      btnTestLayout.Location = new Point(18, 18);
-      btnTestLayout.Name = "btnTestLayout";
-      btnTestLayout.Size = new Size(75, 23);
-      btnTestLayout.TabIndex = 3;
-      btnTestLayout.Text = "測試佈局";
-      btnTestLayout.UseVisualStyleBackColor = true;
-      btnTestLayout.Click += btnTestLayout_Click;
       // 
       // Form1
       // 
@@ -174,6 +174,7 @@
 
     private NotifyIcon notifyIcon;
     private ContextMenuStrip contextMenuStrip1;
+    private ToolStripMenuItem toolStripMenuItemID;
     private ToolStripMenuItem 開啟拖曳板ToolStripMenuItem;
     private ToolStripMenuItem 關閉拖曳板ToolStripMenuItem;
     private ToolStripMenuItem 結束ToolStripMenuItem;
@@ -183,7 +184,6 @@
     private ToolStripMenuItem 其他設定ToolStripMenuItem;
     private Panel panel1;
     private Panel pnlMembers;
-    private Button btnTestLayout;
     private ModernCard modernCard1;
   }
 }
