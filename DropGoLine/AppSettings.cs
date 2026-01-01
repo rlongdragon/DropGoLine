@@ -19,6 +19,9 @@ namespace DropGoLine {
     
     public string DeviceName { get; set; } = string.Empty;
 
+    public bool AutoClipboardCopy { get; set; } = false;
+    public bool AutoClipboardSync { get; set; } = false;
+
     private static string ConfigPath => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
 
     public static AppSettings Load() {

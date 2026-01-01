@@ -8,6 +8,8 @@ namespace DropGoLine {
     private TextBox txtServerIP;
     private Label lblDeviceName; // Added
     private TextBox txtDeviceName; // Added
+    private CheckBox chkAutoCopy;
+    private CheckBox chkAutoSync;
     private Button btnSave;
 
     public SettingsForm() {
@@ -19,6 +21,8 @@ namespace DropGoLine {
       this.txtServerIP = new System.Windows.Forms.TextBox();
       this.lblDeviceName = new System.Windows.Forms.Label(); // Added
       this.txtDeviceName = new System.Windows.Forms.TextBox(); // Added
+      this.chkAutoCopy = new System.Windows.Forms.CheckBox();
+      this.chkAutoSync = new System.Windows.Forms.CheckBox();
       this.btnSave = new System.Windows.Forms.Button();
       this.SuspendLayout();
       // 
@@ -54,9 +58,33 @@ namespace DropGoLine {
       this.txtDeviceName.Size = new System.Drawing.Size(200, 23);
       this.txtDeviceName.TabIndex = 3; // Added
       // 
+      // chkAutoCopy
+      // 
+      this.chkAutoCopy.AutoSize = true;
+      this.chkAutoCopy.Location = new System.Drawing.Point(33, 130);
+      this.chkAutoCopy.Name = "chkAutoCopy";
+      this.chkAutoCopy.Size = new System.Drawing.Size(150, 19);
+      this.chkAutoCopy.TabIndex = 4;
+      this.chkAutoCopy.Text = "接收文字自動複製";
+      this.chkAutoCopy.UseVisualStyleBackColor = true;
+      // 
+      // chkAutoSync
+      // 
+      this.chkAutoSync.AutoSize = true;
+      this.chkAutoSync.Location = new System.Drawing.Point(33, 155);
+      this.chkAutoSync.Name = "chkAutoSync";
+      this.chkAutoSync.Size = new System.Drawing.Size(150, 19);
+      this.chkAutoSync.TabIndex = 5;
+      this.chkAutoSync.Text = "本機複製自動發送";
+      this.chkAutoSync.UseVisualStyleBackColor = true;
+
+      // 
       // btnSave
       // 
-      this.btnSave.Location = new System.Drawing.Point(85, 140); // Adjusted Y
+      // 
+      // btnSave
+      // 
+      this.btnSave.Location = new System.Drawing.Point(85, 190); // Adjusted Y
       this.btnSave.Name = "btnSave";
       this.btnSave.Size = new System.Drawing.Size(100, 30);
       this.btnSave.TabIndex = 4; // Adjusted TabIndex
@@ -68,7 +96,8 @@ namespace DropGoLine {
       // 
       this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
       this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-      this.ClientSize = new System.Drawing.Size(284, 161);
+      this.Controls.Add(this.chkAutoSync);
+      this.Controls.Add(this.chkAutoCopy);
       this.Controls.Add(this.btnSave);
       this.AcceptButton = this.btnSave; // Enter to Save
       this.Controls.Add(this.txtDeviceName);
@@ -81,6 +110,7 @@ namespace DropGoLine {
       this.Name = "SettingsForm";
       this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
       this.Text = "其他設定";
+      this.ClientSize = new System.Drawing.Size(284, 240);
       this.KeyPreview = true; // Catch ESC
       this.ResumeLayout(false);
       this.PerformLayout();
@@ -88,11 +118,15 @@ namespace DropGoLine {
       // Load Settings
       this.txtServerIP.Text = AppSettings.Current.ServerIP;
       this.txtDeviceName.Text = AppSettings.Current.DeviceName;
+      this.chkAutoCopy.Checked = AppSettings.Current.AutoClipboardCopy;
+      this.chkAutoSync.Checked = AppSettings.Current.AutoClipboardSync;
     }
 
     private void BtnSave_Click(object sender, EventArgs e) {
       AppSettings.Current.ServerIP = txtServerIP.Text;
       AppSettings.Current.DeviceName = txtDeviceName.Text;
+      AppSettings.Current.AutoClipboardCopy = chkAutoCopy.Checked;
+      AppSettings.Current.AutoClipboardSync = chkAutoSync.Checked;
       AppSettings.Current.Save();
       MessageBox.Show("設定已儲存，請重新啟動程式以套用新設定。", "提示");
       this.Close();

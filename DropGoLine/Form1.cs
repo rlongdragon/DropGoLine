@@ -18,6 +18,14 @@ namespace DropGoLine {
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, int fsModifiers, int vk);
     [DllImport("user32.dll")]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    
+    [DllImport("user32.dll")]
+    private static extern bool AddClipboardFormatListener(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+
+    private const int WM_CLIPBOARDUPDATE = 0x031D;
 
     private const int MOD_ALT = 0x0001;
     private const int VK_D = 0x44;
@@ -62,6 +70,10 @@ namespace DropGoLine {
     private Point dragStartOffset;
     private Color dragBarColorDefault = Color.Gray;
     private Color dragBarColorHover = Color.DodgerBlue;
+
+    // === Clipboard Logic ===
+    private bool isInternalClipboardChange = false;
+    private string lastReceivedClipboardText = "";
 
     // === Animation Variables ===
     private System.Windows.Forms.Timer widthAnimTimer;
@@ -113,6 +125,10 @@ namespace DropGoLine {
       } else {
         this.BackColor = Color.FromArgb(32, 32, 32);
       }
+      
+      try {
+          AddClipboardFormatListener(this.Handle);
+      } catch { }
 
       // Register Hotkey Alt+D
       RegisterHotKey(this.Handle, HOTKEY_ID, MOD_ALT, VK_D);
@@ -157,6 +173,21 @@ namespace DropGoLine {
             var card = pnlMembers.Controls[msg.Sender] as ModernCard;
             if (card != null) {
               string display = msg.Type == ModernCard.ContentType.Text ? msg.Content : $"📄 {msg.Content}";
+              
+              // === Auto Clipboard Copy Logic ===
+              if (msg.Type == ModernCard.ContentType.Text && AppSettings.Current.AutoClipboardCopy) {
+                  // Avoid re-broadcasting what we just received
+                  if (msg.Content != lastReceivedClipboardText) {
+                      lastReceivedClipboardText = msg.Content;
+                      isInternalClipboardChange = true;
+                      try {
+                          Clipboard.SetText(msg.Content);
+                      } catch { }
+                      // Reset flag after a short delay or assume next WM_CLIPBOARDUPDATE needs to see this
+                      // Since SetText is synchronous, WM_CLIPBOARDUPDATE will fire immediately after.
+                      // We handle the flag reset in WndProc or just logic.
+                  }
+              }
 
               // 若是 FILE_OFFER,把 Size 存入 card.FileSize
               if (msg.Type == ModernCard.ContentType.File_Offer && long.TryParse(msg.Tag as string, out long size)) {
@@ -318,6 +349,33 @@ namespace DropGoLine {
               this.Show();
               this.WindowState = FormWindowState.Normal;
               this.Activate();
+          }
+      }
+      
+
+      
+      if (m.Msg == WM_CLIPBOARDUPDATE) {
+          if (AppSettings.Current.AutoClipboardSync) {
+             if (isInternalClipboardChange) {
+                 isInternalClipboardChange = false; // Reset flag and ignore this update
+             } else {
+                 try {
+                     if (Clipboard.ContainsText()) {
+                         string text = Clipboard.GetText();
+                         if (!string.IsNullOrEmpty(text) && text != lastReceivedClipboardText) {
+                             // This is a local copy action
+                             // Mark as ours to avoid echo if it comes back (conceptually)
+                             // But actually we just broadcast.
+                             // Update lastReceivedClipboardText so if we receive it back we ignore?
+                             // No, if we send it, peers receive it.
+                             
+                             // Debounce or simple check?
+                             // Just broadcast.
+                             P2PManager.Instance.Broadcast("TEXT", text);
+                         }
+                     }
+                 } catch { } // Clipboard busy
+             }
           }
       }
       
@@ -763,6 +821,7 @@ namespace DropGoLine {
         this.Hide();
       } else {
         UnregisterHotKey(this.Handle, HOTKEY_ID);
+        try { RemoveClipboardFormatListener(this.Handle); } catch { }
         base.OnFormClosing(e);
       }
     }

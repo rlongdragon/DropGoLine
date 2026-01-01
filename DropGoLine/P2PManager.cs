@@ -367,6 +367,10 @@ namespace DropGoLine {
 
       if (type == "TEXT") {
         string text = parts.Length > 1 ? parts[1] : "";
+        try {
+            byte[] bytes = Convert.FromBase64String(text);
+            text = Encoding.UTF8.GetString(bytes);
+        } catch { } // Fallback to raw text if not base64
         OnMessageReceived?.Invoke(this, new P2PMessage {
           Sender = sender,
           Type = ModernCard.ContentType.Text,
@@ -465,6 +469,11 @@ namespace DropGoLine {
 
     public void Broadcast(string type, string content, string extra = "") {
       string myName = AppSettings.Current.DeviceName;
+      
+      if (type == "TEXT") {
+          content = Convert.ToBase64String(Encoding.UTF8.GetBytes(content));
+      }
+
       string payload = $"{type}|{content}";
       if (!string.IsNullOrEmpty(extra))
         payload += $"|{extra}";
