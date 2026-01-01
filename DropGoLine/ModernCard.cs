@@ -18,8 +18,17 @@ namespace DropGoLine {
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
     public int BorderSize { get; set; } = 4;
 
+    // 新增圖片預覽屬性
+    public Image? PreviewImage { get; set; } = null;
+
+    // 進度條屬性 (0.0 - 1.0)
+    public float Progress { get; set; } = 0f;
+    public Color ProgressColor { get; set; } = Color.FromArgb(100, 0, 255, 0);
+    
+    // 檔案大小 (用於計算進度)
+    public long FileSize { get; set; } = -1;
+
     // ⚠️ 關鍵改變 1：這是卡片真正的顏色
-    // ⚠️ 關鍵改變 1：卡片顏色改為「半透明黑色」，增強對比度
     [Category("Appearance")]
     [Description("設定卡片的背景顏色")]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
@@ -37,9 +46,6 @@ namespace DropGoLine {
 
     private Color currentBorderColor;
     
-    // 用於儲存傳輸資料 (例如檔案路徑或文字內容)
-    // Tag 屬性來自 Control 基底類別，我們直接使用它
-
     public enum ContentType {
         None,
         Text,
@@ -51,12 +57,17 @@ namespace DropGoLine {
     public ContentType CurrentType { get; private set; } = ContentType.None;
 
     public event Action<IDataObject>? OnDataDrop;
+    public event Action<string>? OnDragRequest;
     
     public void SetContent(string displayText, ContentType type, object? data) {
         this.Text = displayText;
         this.CurrentType = type;
         this.Tag = data; 
         
+        // 🌟 FIX 1: 清除舊的圖片預覽，除非稍後被 Form1 再次設定
+        // 如果沒有這行，之前傳的圖片會一直卡在卡片上，導致文字訊息顯示錯誤
+        this.PreviewImage = null;
+
         // 根據類型變更樣式 (可選)
         if (type == ContentType.File_Offer) {
            // 例如變更文字顏色或加前綴
@@ -66,41 +77,7 @@ namespace DropGoLine {
     private bool isDragEnter = false;
     private Point dragStartPoint;
     private bool isMouseDown = false;
-
-    protected override void OnMouseDown(MouseEventArgs e) {
-        base.OnMouseDown(e);
-        if (e.Button == MouseButtons.Left) {
-            isMouseDown = true;
-            dragStartPoint = e.Location;
-        }
-    }
-
-    protected override void OnMouseMove(MouseEventArgs e) {
-        base.OnMouseMove(e);
-        if (isMouseDown && e.Button == MouseButtons.Left) {
-            // Check if moved enough to start drag
-            if (Math.Abs(e.X - dragStartPoint.X) > SystemInformation.DragSize.Width ||
-                Math.Abs(e.Y - dragStartPoint.Y) > SystemInformation.DragSize.Height) {
-                
-                string contentToDrag = "";
-                if (CurrentType == ContentType.Text && Tag is string text) {
-                    contentToDrag = text;
-                } else {
-                    contentToDrag = Text; // Fallback to display text
-                }
-
-                if (!string.IsNullOrEmpty(contentToDrag)) {
-                    isMouseDown = false; // Reset to avoid re-entry
-                    this.DoDragDrop(contentToDrag, DragDropEffects.Copy | DragDropEffects.Move);
-                }
-            }
-        }
-    }
-
-    protected override void OnMouseUp(MouseEventArgs e) {
-        base.OnMouseUp(e);
-        isMouseDown = false;
-    }
+    private bool isDragging = false; // 🌟 FIX 2: 新增變數標記是否正在拖曳，若是則阻止 Click
 
     public ModernCard() {
       this.DoubleBuffered = true;
@@ -121,6 +98,27 @@ namespace DropGoLine {
 
       this.MouseEnter += (s, e) => { currentBorderColor = HoverBorderColor; this.Invalidate(); };
       this.MouseLeave += (s, e) => { currentBorderColor = BorderColor; this.Invalidate(); };
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e) {
+        base.OnMouseDown(e);
+        if (e.Button == MouseButtons.Left) {
+            isMouseDown = true;
+            isDragging = false; // Reset
+            dragStartPoint = e.Location;
+        }
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        // 🌟 FIX 2: 如果剛剛觸發了拖曳，就不要觸發 Click
+        if (isDragging) return;
+        base.OnMouseClick(e);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e) {
+        base.OnMouseUp(e);
+        isMouseDown = false;
     }
 
     protected override void OnDragEnter(DragEventArgs e) {
@@ -147,7 +145,6 @@ namespace DropGoLine {
         this.Invalidate();
     }
 
-    // ⚠️ 關鍵改變 3：確保背景繪製正確
     protected override void OnPaintBackground(PaintEventArgs e) {
        // 不呼叫 base，我們自己透過 OnPaint 的 SourceCopy 來處理
     }
@@ -156,32 +153,26 @@ namespace DropGoLine {
       // 開啟高品質繪圖
       e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
       e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality; 
-      // 確保文字不會因為 ClearType 在透明背景上出現破碎 (黑邊或破洞)
       e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
 
       // 🌟 MAGIC：使用 SourceCopy 模式，強制將 Alpha 值寫入
       e.Graphics.CompositingMode = CompositingMode.SourceCopy;
       
-      // ⚠️ 關鍵修正：先清除整個畫布為透明，避免圓角外部有殘留像素
       e.Graphics.Clear(Color.Transparent);
 
-      // 為了防止邊框被切掉，矩形要內縮邊框的一半
       float halfBorder = BorderSize / 2.0f;
       RectangleF rect = new RectangleF(halfBorder, halfBorder, this.Width - BorderSize, this.Height - BorderSize);
 
-      // 判斷是否正在拖曳中，調整邊框樣式
       Color targetBorderColor = isDragEnter ? Color.Cyan : currentBorderColor;
       float targetBorderSize = isDragEnter ? BorderSize + 2 : BorderSize;
       
-      // 如果正在拖曳，邊框變粗，rect 需要再縮一點以免被切掉
       if (isDragEnter) {
-          float extra = 1.0f; // 額外內縮量
+          float extra = 1.0f; 
           rect.Inflate(-extra, -extra);
       }
       
       DashStyle targetDashStyle = isDragEnter ? DashStyle.Dash : DashStyle.Solid;
       
-      // 動態計算合適的圓角大小，避免過大導致破圖
       float minDimension = Math.Min(rect.Width, rect.Height);
       float adjustedRadius = Math.Min(BorderRadius, minDimension / 2 - 1); 
       if (adjustedRadius < 1) adjustedRadius = 1;
@@ -192,30 +183,118 @@ namespace DropGoLine {
       {
         pen.DashStyle = targetDashStyle;
 
-        // 1. 填滿半透明區域
+        // 1. 填滿背景
         e.Graphics.FillPath(brush, path);
         
-        // 切換回正常混合模式畫邊框與文字
+        // 切換回正常混合模式畫邊框與文字/圖片
         e.Graphics.CompositingMode = CompositingMode.SourceOver;
 
-        // 2. 畫邊框
-        // 只有當邊框大於 0 時才畫，且 Pen 必須設定 Alignment 為 Center (預設) 
-        // 我們的 rect 已經內縮了一半邊框，所以畫在中線上剛好是貼齊邊緣
+        // 1.5 畫進度條 (如果有)
+        if (Progress > 0 && Progress <= 1.0f) {
+             // 強化進度條視覺：高度 10px，位於底部
+             int h = 10; 
+             RectangleF progressRect = new RectangleF(rect.X, rect.Bottom - h, rect.Width * Progress, h);
+             
+             // 使用 SetClip 確保進度條都在圓角內
+             Region oldClip = e.Graphics.Clip;
+             e.Graphics.SetClip(path);
+             using (SolidBrush pBrush = new SolidBrush(ProgressColor)) {
+                 e.Graphics.FillRectangle(pBrush, progressRect);
+             }
+             // Add border for progress bar?
+             using (Pen pPen = new Pen(Color.White, 1)) {
+                 e.Graphics.DrawRectangle(pPen, rect.X, rect.Bottom - h, rect.Width, h);
+             }
+             e.Graphics.Clip = oldClip;
+        }
+
+        // 2. 畫圖片預覽 (如果有)
+        if (PreviewImage != null) {
+            // 設定圖片繪製區域 (保留邊距)
+            RectangleF imgRect = rect;
+            imgRect.Inflate(-5, -5); 
+            
+            // 保持比例繪製
+            // 計算縮放比例
+            float ratioX = imgRect.Width / PreviewImage.Width;
+            float ratioY = imgRect.Height / PreviewImage.Height;
+            float ratio = Math.Min(ratioX, ratioY);
+            
+            float w = PreviewImage.Width * ratio;
+            float h = PreviewImage.Height * ratio;
+            float x = imgRect.X + (imgRect.Width - w) / 2;
+            float y = imgRect.Y + (imgRect.Height - h) / 2;
+
+            // 使用 SetClip 確保圖片不會超出圓角
+            Region oldClip = e.Graphics.Clip;
+            e.Graphics.SetClip(path);
+            e.Graphics.DrawImage(PreviewImage, x, y, w, h);
+            e.Graphics.Clip = oldClip;
+        }
+
+        // 3. 畫邊框
         if (targetBorderSize > 0)
             e.Graphics.DrawPath(pen, path);
 
-        // 3. 手動繪製文字 (解決 Label 白底問題)
-        if (!string.IsNullOrEmpty(Text)) {
-            // 設定文字格式 (置中)
+        // 4. 繪製文字 (如果有圖片，文字顯示在下方或覆蓋? 簡單起見，沒圖片才畫文字，或者畫在角落)
+        // 為了簡單，如果沒有圖片才畫大文字，有圖片則不畫或畫小標題?
+        // 使用者希望「圖片顯示在框框」，假設是取代文字。但如果有檔名呢？
+        // 暫定：如果有 PreviewImage，就不畫中間的文字。
+        if (PreviewImage == null && !string.IsNullOrEmpty(Text)) {
             StringFormat sf = new StringFormat();
             sf.Alignment = StringAlignment.Center;
             sf.LineAlignment = StringAlignment.Center;
+            sf.Trimming = StringTrimming.EllipsisCharacter;
 
             using (Brush textBrush = new SolidBrush(this.ForeColor)) {
                 e.Graphics.DrawString(Text, this.Font, textBrush, rect, sf);
             }
         }
       }
+    }
+
+    // ... (GetRoundedPath)
+
+    // 拖曳邏輯修改
+    protected override void OnMouseMove(MouseEventArgs e) {
+        base.OnMouseMove(e);
+        if (isMouseDown && e.Button == MouseButtons.Left) {
+            if (Math.Abs(e.X - dragStartPoint.X) > SystemInformation.DragSize.Width ||
+                Math.Abs(e.Y - dragStartPoint.Y) > SystemInformation.DragSize.Height) {
+                
+                isMouseDown = false; 
+                isDragging = true; // 🌟 FIX: 標記為拖曳，抑制 Click
+
+                // 判斷拖曳類型
+                if (CurrentType == ContentType.File_Offer) {
+                     if (Tag is string filePath && System.IO.File.Exists(filePath)) {
+                         // 檔案存在 -> 直接拖曳
+                         var dataObj = new DataObject(DataFormats.FileDrop, new string[] { filePath });
+                         this.DoDragDrop(dataObj, DragDropEffects.Copy);
+                     } else {
+                        // 檔案不存在 (或 Tag 不是路徑) -> 觸發下載請求
+                        string fname = Text.Replace("📄 ", "").Trim();
+                        // 觸發事件讓 Form1 處理下載
+                        OnDragRequest?.Invoke(fname);
+                     }
+                }
+                else {
+                    // 純文字拖曳
+                    string contentToDrag = "";
+                    if (CurrentType == ContentType.Text && Tag is string text) {
+                        contentToDrag = text;
+                    } else if (Tag is string s) {
+                         contentToDrag = s; // Fallback
+                    } else {
+                        contentToDrag = Text; 
+                    }
+
+                    if (!string.IsNullOrEmpty(contentToDrag)) {
+                        this.DoDragDrop(contentToDrag, DragDropEffects.Copy | DragDropEffects.Move);
+                    }
+                }
+            }
+        }
     }
 
     private GraphicsPath GetRoundedPath(RectangleF rect, float radius) {

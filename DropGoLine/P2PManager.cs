@@ -11,7 +11,7 @@ using System.Windows.Forms;
 namespace DropGoLine {
   public class P2PManager {
     // Singleton Instance
-    private static P2PManager _instance;
+    private static P2PManager? _instance;
     public static P2PManager Instance => _instance ??= new P2PManager();
 
     // Constants
@@ -22,7 +22,7 @@ namespace DropGoLine {
     // State
     public string CurrentCode {
       get; private set;
-    }
+    } = "Init";
     private string ServerIP = "127.0.0.1";
     private TcpClient? serverClient;
     private StreamReader? serverReader;
@@ -42,6 +42,7 @@ namespace DropGoLine {
     public event EventHandler<P2PMessage>? OnMessageReceived; // Changed to structured message
     public event EventHandler<string>? OnPeerConnected;
     public event EventHandler<string>? OnPeerDisconnected;
+    public event EventHandler<(string Sender, float Progress)>? OnDownloadProgress;
 
     public class P2PMessage {
       public string Sender { get; set; } = "";
@@ -52,6 +53,7 @@ namespace DropGoLine {
       public object? Tag {
         get; set;
       } // Extra data (Size, etc)
+      public object? ExtraData { get; set; } // For Image or other objects
     }
 
     private P2PManager() {
@@ -114,22 +116,38 @@ namespace DropGoLine {
         if (string.IsNullOrEmpty(fileServerCurrentPath) || !File.Exists(fileServerCurrentPath))
           return;
 
-        byte[] fileBytes = await File.ReadAllBytesAsync(fileServerCurrentPath);
-        await ns.WriteAsync(fileBytes, 0, fileBytes.Length);
+        using (FileStream fs = new FileStream(fileServerCurrentPath, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+            await fs.CopyToAsync(ns);
+        }
       } catch { } finally { client.Close(); }
     }
 
-    public async Task DownloadFileDirect(string host, int port, string savePath) {
+    public async Task DownloadFileDirect(string senderName, string host, int port, string savePath, long expectedSize = -1) {
       try {
-        using TcpClient client = new TcpClient();
-        await client.ConnectAsync(host, port);
-        using NetworkStream ns = client.GetStream();
-        using FileStream fs = new FileStream(savePath, FileMode.Create, FileAccess.Write);
-        await ns.CopyToAsync(fs);
+        using (FileStream fs = new FileStream(savePath, FileMode.Create, FileAccess.Write)) {
+            await DownloadFileDirect(senderName, host, port, fs, expectedSize);
+        }
         MessageBox.Show($"檔案下載完成 (直連): {savePath}", "成功");
       } catch (Exception ex) {
         MessageBox.Show($"直連下載失敗: {ex.Message}", "錯誤");
       }
+    }
+
+    public async Task DownloadFileDirect(string senderName, string host, int port, Stream outputStream, long expectedSize = -1) {
+        using TcpClient client = new TcpClient();
+        await client.ConnectAsync(host, port);
+        using NetworkStream ns = client.GetStream();
+        
+        byte[] buffer = new byte[65536];
+        long totalRead = 0;
+        int read;
+        while ((read = await ns.ReadAsync(buffer, 0, buffer.Length)) > 0) {
+            await outputStream.WriteAsync(buffer, 0, read);
+            totalRead += read;
+             
+             float progress = expectedSize > 0 ? (float)totalRead / expectedSize : -1;
+             OnDownloadProgress?.Invoke(this, (senderName, progress));
+        }
     }
 
     public async Task StartRelaySender(string targetPeer, string filePath) {
@@ -175,10 +193,21 @@ namespace DropGoLine {
         }
     }
 
-    public async Task StartRelayReceiver(string transId, string savePath) {
+    public async Task StartRelayReceiver(string senderName, string transId, string savePath, long expectedSize = -1) {
         try {
-            // 1. Connect to Server
-            TcpClient relayClient = new TcpClient();
+            using (FileStream fs = new FileStream(savePath, FileMode.Create, FileAccess.Write)) {
+                await StartRelayReceiver(senderName, transId, fs, expectedSize);
+            }
+            MessageBox.Show($"檔案下載完成 (中繼): {savePath}", "成功");
+        } catch (Exception ex) {
+            MessageBox.Show($"Relay 接收錯誤: {ex.Message}");
+        }
+    }
+
+    public async Task StartRelayReceiver(string senderName, string transId, Stream outputStream, long expectedSize = -1) {
+         // 1. Connect to Server
+         TcpClient relayClient = new TcpClient();
+         try {
             await relayClient.ConnectAsync(ServerIP, SERVER_PORT);
             NetworkStream ns = relayClient.GetStream();
             StreamWriter writer = new StreamWriter(ns, new UTF8Encoding(false)) { AutoFlush = true };
@@ -187,19 +216,22 @@ namespace DropGoLine {
             await writer.WriteLineAsync($"CHANNEL_JOIN|{transId}");
 
             // Wait for ACK "RELAY_START"
-            // Use Byte-by-Byte reading to avoid buffering issues (CRITICAL)
             string ack = await ReadLineByteByByteAsync(ns);
             if (ack != "RELAY_START") throw new Exception($"Server ACK Failed: {ack}");
 
-            // 3. Receive Data
-            using (FileStream fs = new FileStream(savePath, FileMode.Create, FileAccess.Write)) {
-                await ns.CopyToAsync(fs);
+            // 3. Receive Data with Progress
+            byte[] buffer = new byte[65536];
+            long totalRead = 0;
+            int read;
+            while ((read = await ns.ReadAsync(buffer, 0, buffer.Length)) > 0) {
+                await outputStream.WriteAsync(buffer, 0, read);
+                totalRead += read;
+                
+                float progress = expectedSize > 0 ? (float)totalRead / expectedSize : -1;
+                OnDownloadProgress?.Invoke(this, (senderName, progress)); 
             }
-
+        } finally {
             relayClient.Close();
-            MessageBox.Show($"檔案下載完成 (中繼): {savePath}", "成功");
-        } catch (Exception ex) {
-            MessageBox.Show($"Relay 接收錯誤: {ex.Message}");
         }
     }
 
@@ -292,7 +324,6 @@ namespace DropGoLine {
           } else if (parts[0] == "MSG") {
             // MSG|Code|Name|Type|Content|Extra
             // For compatibility with old peers, handle length differences
-            string content = "";
             if (parts.Length >= 4) { // New format or Old format?
                                      // Let's assume standard format: MSG|senderCode|senderName|...
               string senderName = parts[2];
@@ -382,8 +413,36 @@ namespace DropGoLine {
           Content = fromIP,
           Tag = port
         });
+      } else if (type == "IMG_OFFER") {
+          // IMG_OFFER|FileName|Size|Base64Thumbnail
+          string fname = parts.Length > 1 ? parts[1] : "Image";
+          string size = parts.Length > 2 ? parts[2] : "0";
+          string base64Thumb = parts.Length > 3 ? parts[3] : "";
+          
+          Image? thumb = null;
+          try {
+              if (!string.IsNullOrEmpty(base64Thumb)) {
+                  byte[] b = Convert.FromBase64String(base64Thumb);
+                  using (MemoryStream ms = new MemoryStream(b)) {
+                      thumb = Image.FromStream(ms);
+                  }
+              }
+          } catch {}
+
+          OnMessageReceived?.Invoke(this, new P2PMessage {
+              Sender = sender,
+              Type = ModernCard.ContentType.File_Offer,
+              Content = fname,
+              Tag = size, // Use Tag for size string
+              ExtraData = thumb // Need to add ExtraData to P2PMessage or reuse Tag? 
+              // Wait, Tag is used for Size string in File_Offer. 
+              // We need to pass Image. 
+              // Let's modify P2PMessage struct first? Or put Image in a tuple?
+              // Let's modify P2PMessage definition in next step.
+              // For now assuming Tag can hold more complex object or we add property.
+          });
       } else {
-        // Fallback for plain text from old peers or simple relays
+        // Fallback for plain text
         OnMessageReceived?.Invoke(this, new P2PMessage {
           Sender = sender,
           Type = ModernCard.ContentType.Text,
@@ -420,6 +479,39 @@ namespace DropGoLine {
       if (serverWriter != null && type != "FILE_PORT") {
         serverWriter.WriteLine($"RELAY|{payload}");
       }
+    }
+
+    public void SendImageOffer(string filePath) {
+        if (!File.Exists(filePath)) return;
+        
+        string fname = Path.GetFileName(filePath);
+        long size = new FileInfo(filePath).Length;
+        
+        // Generate Thumbnail
+        string base64Thumb = "";
+        try {
+            using (Image img = Image.FromFile(filePath)) {
+                // Resize to max 200x200
+                int max = 200;
+                float ratio = Math.Min((float)max / img.Width, (float)max / img.Height);
+                int w = (int)(img.Width * ratio);
+                int h = (int)(img.Height * ratio);
+                
+                using (Bitmap thumb = new Bitmap(img, w, h)) 
+                using (MemoryStream ms = new MemoryStream()) {
+                    thumb.Save(ms, System.Drawing.Imaging.ImageFormat.Jpeg);
+                    base64Thumb = Convert.ToBase64String(ms.ToArray());
+                }
+            }
+        } catch { }
+
+        // Start File Server
+        StartFileServer(filePath);
+        
+        // Broadcast IMG_OFFER
+        // IMG_OFFER|FileName|Size|Base64
+        // Use BroadcastDirect logic? Or Broadcast to all?
+        Broadcast("IMG_OFFER", fname, $"{size.ToString()}|{base64Thumb}");
     }
 
     public void BroadcastDirect(string targetName, string payload) {

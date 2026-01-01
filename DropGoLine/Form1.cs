@@ -28,6 +28,8 @@ namespace DropGoLine {
       public int cyBottomHeight;
     }
 
+    private TaskCompletionSource<string>? dragTcs;
+
     // === Window Resizing Constants ===
     private const int WM_NCHITTEST = 0x0084;
     private const int HTCLIENT = 1;
@@ -121,6 +123,18 @@ namespace DropGoLine {
       P2PManager.Instance.OnIDChanged += (s, id) => {
         this.Invoke((MethodInvoker)(() => toolStripMenuItemID.Text = $"ID: {id}"));
       };
+      
+      P2PManager.Instance.OnDownloadProgress += (s, args) => {
+          this.Invoke((MethodInvoker)(() => {
+             // args.Sender is now guaranteed to be the Name of the peer.
+             if (pnlMembers.Controls.ContainsKey(args.Sender)) {
+                 if (pnlMembers.Controls[args.Sender] is ModernCard card) {
+                      card.Progress = args.Progress;
+                      card.Invalidate();
+                 }
+             }
+          }));
+      };
 
       P2PManager.Instance.OnMessageReceived += (s, msg) => {
         this.Invoke((MethodInvoker)(() => {
@@ -128,23 +142,94 @@ namespace DropGoLine {
             var card = pnlMembers.Controls[msg.Sender] as ModernCard;
             if (card != null) {
               string display = msg.Type == ModernCard.ContentType.Text ? msg.Content : $"📄 {msg.Content}";
+              
+              // 若是 FILE_OFFER,把 Size 存入 card.FileSize
+              if (msg.Type == ModernCard.ContentType.File_Offer && long.TryParse(msg.Tag as string, out long size)) {
+                  card.FileSize = size;
+              }
+              
+              // SetContent 更新文字與類型,但不應影響 FileSize
               card.SetContent(display, msg.Type, msg.Type == ModernCard.ContentType.File_Offer ? msg.Tag : msg.Content);
+              
+              if (msg.ExtraData is Image img) {
+                  card.PreviewImage = img;
+                  card.Invalidate();
+              }
             }
           }
 
           // Handle File Port/Relay Response (Trigger Download)
-          if (msg.Type == ModernCard.ContentType.File_Transferring && !string.IsNullOrEmpty(pendingSavePath)) {
-            
-            if (msg.Tag is string transId) {
-                // Relay Mode
-                _ = P2PManager.Instance.StartRelayReceiver(transId, pendingSavePath);
-            } else if (msg.Tag is int port) {
-                // Direct Mode
-                 string ip = msg.Content; // Content stores IP in this case
-                 _ = P2PManager.Instance.DownloadFileDirect(ip, port, pendingSavePath);
-            }
+          if (msg.Type == ModernCard.ContentType.File_Transferring) {
+              
+              // 1. Check Virtual Drag Handshake (Priority)
+              if (downloadHandshakeTcs != null && !downloadHandshakeTcs.Task.IsCompleted) {
+                  string result = "";
+                  if (msg.Tag is string transId) {
+                      result = transId;
+                  } else if (msg.Tag is int port) {
+                      // Direct Mode: IP comes from Content?
+                      // Content was fromIP.
+                      result = $"{msg.Content}:{port}"; 
+                  }
+                  downloadHandshakeTcs.TrySetResult(result);
+                  return; // Handled by Virtual Drag
+              }
 
-            pendingSavePath = null; // Reset
+              // 2. Legacy / SaveDialog Flow
+              if (!string.IsNullOrEmpty(pendingSavePath)) {
+            
+                // Capture synchronously
+                string currentSavePath = pendingSavePath; 
+
+                Task.Run(async () => {
+                    string savedFile = currentSavePath;
+                    bool success = false;
+                    
+                    try {
+                        // Start download
+                        // Use the FileSize we stored in the card
+                        long size = -1;
+                        this.Invoke((MethodInvoker)(() => {
+                            if (pnlMembers.Controls[msg.Sender] is ModernCard card) {
+                                 size = card.FileSize;
+                                 // Fallback if -1?
+                                 if (size <= 0 && long.TryParse(card.Tag as string, out long s)) size = s;
+                            }
+                        }));
+
+                        if (msg.Tag is string transId) {
+                            // Relay Mode
+                            await P2PManager.Instance.StartRelayReceiver(msg.Sender, transId, savedFile, size);
+                            success = true;
+                        } else if (msg.Tag is int port) {
+                            // Direct Mode
+                            string ip = msg.Content; // Content stores IP in this case
+                            await P2PManager.Instance.DownloadFileDirect(msg.Sender, ip, port, savedFile, size);
+                            success = true;
+                        }
+                    } catch { success = false; }
+
+                    if (success) {
+                        // Update UI or Signal Completion
+                        this.Invoke((MethodInvoker)(() => {
+                            // If we have a pending drag operation or need to update UI
+                            if (dragTcs != null && !dragTcs.Task.IsCompleted) {
+                                dragTcs.TrySetResult(savedFile);
+                            }
+                            
+                            // Critical Fix: Update Card Tag to local path so next drag works instantly
+                            if (pnlMembers.Controls[msg.Sender] is ModernCard card) {
+                               card.Tag = savedFile; 
+                               // Also clear progress
+                               card.Progress = 0;
+                               card.Invalidate();
+                            }
+                        }));
+                    }
+                });
+
+                pendingSavePath = null; // Reset
+              }
           }
         }));
       };
@@ -309,6 +394,7 @@ namespace DropGoLine {
 
       // Wire up Click Event
       newCard.Click += OnCardClick;
+      newCard.OnDragRequest += HandleDragRequest;
 
       pnlMembers.Controls.Add(newCard);
       newCard.BringToFront();
@@ -317,46 +403,80 @@ namespace DropGoLine {
       this.Refresh();
     }
 
+    private TaskCompletionSource<string>? downloadHandshakeTcs;
+
+    // Handle "Drag to Download" (Fake Drag / Virtual File)
+    private void HandleDragRequest(string fileName) {
+        ModernCard? targetCard = null;
+        foreach(Control c in pnlMembers.Controls) {
+            if (c is ModernCard card && card.Text.Contains(fileName)) { 
+                targetCard = card;
+                break;
+            }
+        }
+        
+        if (targetCard == null) return;
+        
+        long size = targetCard.FileSize;
+        if (size <= 0) size = 1024; // Fallback size if unknown, but better if known
+
+        // 建立 Virtual File DataObject
+        var virtualData = new VirtualFileDataObject(async (stream) => {
+             // 1. Setup handshake waiter
+             downloadHandshakeTcs = new TaskCompletionSource<string>();
+             
+             // 2. Send Request
+             // 這裡必須 Invoke 到主執行緒發送嗎？BroadcastDirect 內部是 thread-safe 嗎？
+             // P2PManager.BroadcastDirect 看起來是 safe 的 (Network IO)
+             P2PManager.Instance.BroadcastDirect(targetCard.Name, $"FILE_REQ|{fileName}");
+             
+             // 3. Wait for P2P Handshake (FILE_PORT / FILE_RELAY_READY)
+             // Timeout 20s (Relay handshake might be slow)
+             var completed = await Task.WhenAny(downloadHandshakeTcs.Task, Task.Delay(20000));
+             
+             if (completed != downloadHandshakeTcs.Task) {
+                 // Timestamp out
+                 return;
+             }
+             
+             string identifier = await downloadHandshakeTcs.Task; // TransID or IP:Port
+             
+             // 4. Start Transfer to Stream
+             if (identifier.Contains(":")) { 
+                 // Direct Mode "IP:Port"
+                 var parts = identifier.Split(':');
+                 await P2PManager.Instance.DownloadFileDirect(targetCard.Name, parts[0], int.Parse(parts[1]), stream, size);
+             } else {
+                 // Relay Mode "TransID"
+                 await P2PManager.Instance.StartRelayReceiver(targetCard.Name, identifier, stream, size);
+             }
+             
+             // Transfer Done! 
+             // Update Card to point to the file? 
+             // 問題：Virtual File 不知道 Explorer 存到哪裡去了 (除非用特殊 Shell Hook)
+             // 所以這種模式下，Card Tag 不會更新為本地路徑。
+             // 下次拖曳還是會觸發下載 (或視為複製)
+             // 這是 Virtual File 的特性。
+
+        }, fileName, size);
+        
+        // Start Drag (Blocking Call until Drop complete)
+        targetCard.DoDragDrop(virtualData, DragDropEffects.Copy);
+    }
+
     private void OnCardClick(object? sender, EventArgs e) {
       var card = sender as ModernCard;
       if (card == null || card.CurrentType == ModernCard.ContentType.None)
         return;
 
-      if (card.CurrentType == ModernCard.ContentType.Text) {
+        if (card.CurrentType == ModernCard.ContentType.Text) {
         string text = card.Tag as string ?? card.Text;
         Clipboard.SetText(text);
-        MessageBox.Show("文字已複製", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information); // Can be replaced with Toast later
+        // MessageBox removed for smoother UX or use Toast
+        // MessageBox.Show("文字已複製", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information); 
       } else if (card.CurrentType == ModernCard.ContentType.File_Offer) {
-        // Initiate Download Flow
-        string fileName = card.Text.Replace("📄 ", "");
-        SaveFileDialog sfd = new SaveFileDialog();
-        sfd.FileName = fileName;
-        if (sfd.ShowDialog() == DialogResult.OK) {
-          // Determine source IP from P2PManager? 
-          // For this demo, we assume P2PManager knows the IP or we need to ask P2PManager to handle the handshake.
-          // Since P2PManager.DownloadFileDirect needs IP/Port, we should trigger a REQUEST first via P2PManager.
-          // Or simplified: P2PManager handles the request logic internally if we pass the sender name.
-
-          // Let's implement Request via Broadcast for now
-          // "FILE_REQ|FileName"
-          P2PManager.Instance.BroadcastDirect(card.Name, $"FILE_REQ|{fileName}");
-
-          // We need to store the save path temporarily until we get FILE_PORT
-          // OR simpler: just wait for the FILE_PORT event which contains the IP/Port to download
-          // But the save path is needed then.
-          // Let's store it in Tag or a temporary dict in Form1? 
-          // For simplicity, let's put it in P2PManager or handle it here via a closure if possible? No.
-          // Let's use a sync Context or just blocking wait? Blocking bad.
-          // Revised logic: P2PManager should expose a method "RequestFile(peerName, fileName, savePathCallback)"
-          // But P2PManager is singleton. 
-
-          // Let's keep it simple: 
-          // 1. Send REQ.
-          // 2. Peer sends PORT.
-          // 3. OnMessageReceived (FILE_PORT) -> Check if we have a pending save.
-          // This requires state in Form1.
-          pendingSavePath = sfd.FileName;
-        }
+          // User requested to remove click-to-download functionality.
+          // File download is now Drag-and-Drop ONLY.
       }
     }
 
@@ -389,10 +509,17 @@ namespace DropGoLine {
     }
 
     private void ProcessFileDrop(string path) {
-          string fname = System.IO.Path.GetFileName(path);
-          long size = new System.IO.FileInfo(path).Length;
-          P2PManager.Instance.StartFileServer(path);
-          P2PManager.Instance.Broadcast("FILE_OFFER", fname, size.ToString());
+          string ext = System.IO.Path.GetExtension(path).ToLower();
+          if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp") {
+              // Image Mode
+              P2PManager.Instance.SendImageOffer(path);
+          } else {
+              // Normal File Mode
+              string fname = System.IO.Path.GetFileName(path);
+              long size = new System.IO.FileInfo(path).Length;
+              P2PManager.Instance.StartFileServer(path);
+              P2PManager.Instance.Broadcast("FILE_OFFER", fname, size.ToString());
+          }
     }
 
     private void RemoveMember(string name) {
