@@ -79,7 +79,7 @@ namespace DropGoLine {
     }
 
     private async Task AcceptP2PClients() {
-      while (true) {
+      while (p2pListener != null) {
         try {
           TcpClient client = await p2pListener.AcceptTcpClientAsync();
           _ = Task.Run(() => HandlePeer(client));
@@ -133,7 +133,7 @@ namespace DropGoLine {
       }
     }
 
-    public async Task DownloadFileDirect(string senderName, string host, int port, Stream outputStream, long expectedSize = -1) {
+    public async Task DownloadFileDirect(string senderName, string host, int port, Stream outputStream, long expectedSize = -1, Action<float>? onProgress = null) {
         using TcpClient client = new TcpClient();
         await client.ConnectAsync(host, port);
         using NetworkStream ns = client.GetStream();
@@ -147,6 +147,7 @@ namespace DropGoLine {
              
              float progress = expectedSize > 0 ? (float)totalRead / expectedSize : -1;
              OnDownloadProgress?.Invoke(this, (senderName, progress));
+             onProgress?.Invoke(progress);
         }
     }
 
@@ -204,7 +205,7 @@ namespace DropGoLine {
         }
     }
 
-    public async Task StartRelayReceiver(string senderName, string transId, Stream outputStream, long expectedSize = -1) {
+    public async Task StartRelayReceiver(string senderName, string transId, Stream outputStream, long expectedSize = -1, Action<float>? onProgress = null) {
          // 1. Connect to Server
          TcpClient relayClient = new TcpClient();
          try {
@@ -229,6 +230,7 @@ namespace DropGoLine {
                 
                 float progress = expectedSize > 0 ? (float)totalRead / expectedSize : -1;
                 OnDownloadProgress?.Invoke(this, (senderName, progress)); 
+                onProgress?.Invoke(progress);
             }
         } finally {
             relayClient.Close();
@@ -300,6 +302,7 @@ namespace DropGoLine {
 
     private async Task HandlePeer(TcpClient client) {
       string remoteName = "Unknown";
+      if (client.Client.RemoteEndPoint == null) return;
       string remoteIP = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString();
       try {
         var stream = client.GetStream();
@@ -452,7 +455,7 @@ namespace DropGoLine {
     }
 
     private async Task SendHeartbeat() {
-      while (serverClient != null && serverClient.Connected) {
+      while (serverClient != null && serverClient.Connected && serverWriter != null) {
         try {
           await serverWriter.WriteLineAsync("PING");
           await Task.Delay(HEARTBEAT_INTERVAL);

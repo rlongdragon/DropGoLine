@@ -1,99 +1,178 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Windows.Forms;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace DropGoLine {
-    // 實作 Virtual File Drag 的核心類別 (使用 COM 介面以支援 Stream 模式，解決 OOM 問題)
+
+    // 定義 IDataObjectAsyncCapability 介面
+    [ComImport]
+    [Guid("3D8B0590-F691-11d2-8EA9-006097DF5BD4")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IDataObjectAsyncCapability {
+        void SetAsyncMode([In] int fDoOpAsync);
+        void GetAsyncMode([Out] out int pfIsOpAsync);
+        void StartOperation([In] IBindCtx? pbcReserved);
+        void InOperation([Out] out int pfInAsyncOp);
+        void EndOperation([In] int hResult, [In] IBindCtx? pbcReserved, [In] uint dwEffects);
+    }
+
+    // 支援 Async Drop 與進度視窗的 DataObject
     [ComVisible(true)]
-    public class VirtualFileDataObject : System.Runtime.InteropServices.ComTypes.IDataObject, IDisposable {
+    public class VirtualFileDataObject : System.Runtime.InteropServices.ComTypes.IDataObject, IDataObjectAsyncCapability, IDisposable {
         private const string CFSTR_FILEDESCRIPTORW = "FileGroupDescriptorW";
-        private const string CFSTR_FILECONTENTS = "FileContents";
         private const string CFSTR_PERFORMEDDROPEFFECT = "Performed DropEffect";
         private const string CFSTR_PREFERREDDROPEFFECT = "Preferred DropEffect";
 
         private static readonly short CF_FK_FILEDESCRIPTORW = (short)DataFormats.GetFormat(CFSTR_FILEDESCRIPTORW).Id;
-        private static readonly short CF_FK_FILECONTENTS = (short)DataFormats.GetFormat(CFSTR_FILECONTENTS).Id;
         private static readonly short CF_FK_PERFORMEDDROPEFFECT = (short)DataFormats.GetFormat(CFSTR_PERFORMEDDROPEFFECT).Id;
         private static readonly short CF_FK_PREFERREDDROPEFFECT = (short)DataFormats.GetFormat(CFSTR_PREFERREDDROPEFFECT).Id;
+        private static readonly short CF_FK_HDROP = (short)DataFormats.GetFormat(DataFormats.FileDrop).Id;
 
-        // 下載回呼：當 Explorer 要求讀取檔案內容時觸發
-        private Func<Stream, Task> _downloadAction;
-        private string _fileName;
-        private long _fileSize;
+        // 修改 Delegate 簽章以支援進度回呼
+        private readonly Func<Stream, Action<float>?, Task> _downloadAction;
+        private readonly string _fileName;
+        private readonly long _fileSize;
+        
+        private readonly string _tempFilePath;
+        private bool _isDownloaded = false;
 
-        public VirtualFileDataObject(Func<Stream, Task> downloadAction, string fileName, long fileSize) {
+        // Async State
+        private bool _inAsyncOp = false;
+        private bool _asyncMode = false;
+        
+        public VirtualFileDataObject(Func<Stream, Action<float>?, Task> downloadAction, string fileName, long fileSize) {
             _downloadAction = downloadAction;
             _fileName = fileName;
             _fileSize = fileSize;
+            _tempFilePath = Path.Combine(Path.GetTempPath(), fileName);
         }
         
-        // IDisposable 實作 (雖單純 COM 物件不需要，但若有資源需釋放可放此)
-        public void Dispose() {
-            // No unmanaged resources directly held, but good practice
+        public void Dispose() { }
+
+        // === IDataObjectAsyncCapability 實作 ===
+
+        public void SetAsyncMode(int fDoOpAsync) {
+            _asyncMode = (fDoOpAsync != 0);
         }
 
-        // === System.Runtime.InteropServices.ComTypes.IDataObject 實作 ===
+        public void GetAsyncMode(out int pfIsOpAsync) {
+            pfIsOpAsync = _asyncMode ? 1 : 0;
+        }
+
+        public void StartOperation(IBindCtx? pbcReserved) {
+            _inAsyncOp = true;
+            
+            // 這是 Explorer 在背景呼叫的，我們可以安全地在這裡執行下載，不會卡住 UI 拖曳
+            // 但為了顯示進度視窗，我們需要 Invoke 回 UI thread (Application.OpenForms[0])
+            
+            Form? mainForm = Application.OpenForms.Count > 0 ? Application.OpenForms[0] : null;
+            ProgressForm? progressForm = null;
+
+            if (mainForm != null) {
+                mainForm.Invoke(new Action(() => {
+                    progressForm = new ProgressForm(_fileName);
+                    progressForm.Show();
+                }));
+            }
+
+            // 啟動下載任務 (ThreadPool)
+            Task.Run(async () => {
+                try {
+                    using (var fs = new FileStream(_tempFilePath, FileMode.Create, FileAccess.Write, FileShare.Read)) {
+                        // 執行下載，並傳入進度回呼
+                        await _downloadAction(fs, (p) => {
+                            if (progressForm != null && !progressForm.IsDisposed) {
+                                progressForm.UpdateProgress(p);
+                            }
+                        });
+                    }
+                    _isDownloaded = true;
+                    
+                    // 通知 Explorer 成功 (DROPIMAGE_COPY = 1)
+                    EndOperation(0, null, 1); 
+                }
+                catch (Exception ex) {
+                    System.Diagnostics.Debug.WriteLine($"Async Download Failed: {ex}");
+                    // 通知 Explorer 失敗
+                    EndOperation(unchecked((int)0x80004005), null, 0); // E_FAIL
+                }
+                finally {
+                    // 關閉進度視窗
+                    if (mainForm != null && progressForm != null) {
+                         mainForm.Invoke(new Action(() => {
+                             if (!progressForm.IsDisposed) progressForm.Close();
+                         }));
+                    }
+                }
+            });
+        }
+
+        public void InOperation(out int pfInAsyncOp) {
+            pfInAsyncOp = _inAsyncOp ? 1 : 0;
+        }
+
+        public void EndOperation(int hResult, IBindCtx? pbcReserved, uint dwEffects) {
+            _inAsyncOp = false;
+        }
+
+        // === IDataObject 實作 ===
 
         public void GetData(ref FORMATETC format, out STGMEDIUM medium) {
             medium = new STGMEDIUM();
             
-            if (format.cfFormat == CF_FK_FILEDESCRIPTORW) {
+            if (format.cfFormat == CF_FK_HDROP) {
+                // 如果在 Async 模式下，我們直接回傳路徑，不等待下載
+                // Explorer 會在 StartOperation 後才去讀
+                if (_asyncMode) {
+                    // Async Mode: Return path immediately
+                    medium.tymed = TYMED.TYMED_HGLOBAL;
+                    medium.unionmember = GetDropFiles();
+                    medium.pUnkForRelease = null;
+                } else {
+                    // Sync Mode Fallback (For older apps): Must wait synchronously
+                    // 這會卡住 UI，但相容性必須
+                    WaitForSyncDownload();
+                    
+                    medium.tymed = TYMED.TYMED_HGLOBAL;
+                    medium.unionmember = GetDropFiles();
+                    medium.pUnkForRelease = null;
+                }
+            }
+            else if (format.cfFormat == CF_FK_FILEDESCRIPTORW) {
                 medium.tymed = TYMED.TYMED_HGLOBAL;
                 medium.unionmember = GetFileDescriptor();
                 medium.pUnkForRelease = null;
             } 
-            else if (format.cfFormat == CF_FK_HDROP) {
-                // CF_HDROP -> 回傳檔案路徑 (最快，原生速度)
-                // 必須等待下載完成才能給出完整檔案
-                WaitForDownloadCompletion();
-                
-                medium.tymed = TYMED.TYMED_HGLOBAL;
-                medium.unionmember = GetDropFiles();
-                medium.pUnkForRelease = null;
-            }
             else {
-                throw new COMException("Invalid Format", unchecked((int)0x80040064)); // DV_E_FORMATETC
+                throw new COMException("Invalid Format", unchecked((int)0x80040064));
             }
         }
 
-        private void WaitForDownloadCompletion() {
-            // 簡單等待下載任務完成
-            // 注意：這會阻塞 UI 執行緒，但對於 CF_HDROP 這是必要的，
-            // 因為 Windows 拿到路徑後會立刻去讀，若檔案不完整會出錯。
-            // 既然下載速度快，這段等待應該是可接受的。
-            if (_downloadTask != null && !_downloadTask.IsCompleted) {
-                _downloadTask.Wait();
-            }
+        private void WaitForSyncDownload() {
+            if (_isDownloaded && File.Exists(_tempFilePath)) return;
+            try {
+                // 同步等待下載 (注意：可能死鎖風險，但在 Sync Mode 無法避免)
+                // 盡量使用 ThreadPool 避免死鎖
+                Task.Run(async () => {
+                    using (var fs = new FileStream(_tempFilePath, FileMode.Create, FileAccess.Write, FileShare.Read)) {
+                        await _downloadAction(fs, null);
+                    }
+                }).Wait();
+                _isDownloaded = true;
+            } catch { }
         }
 
-        public void GetDataHere(ref FORMATETC format, ref STGMEDIUM medium) {
-            throw new COMException("Not Implemented", unchecked((int)0x80004001)); // E_NOTIMPL
-        }
-
+        // ... Standard COM stubs ...
         public int QueryGetData(ref FORMATETC format) {
-            if (format.cfFormat == CF_FK_FILEDESCRIPTORW || 
-                format.cfFormat == CF_FK_HDROP || 
+            if (format.cfFormat == CF_FK_HDROP || 
+                format.cfFormat == CF_FK_FILEDESCRIPTORW ||
                 format.cfFormat == CF_FK_PERFORMEDDROPEFFECT ||
-                format.cfFormat == CF_FK_PREFERREDDROPEFFECT) 
-            {
-                return 0; // S_OK
-            }
+                format.cfFormat == CF_FK_PREFERREDDROPEFFECT) return 0;
             return unchecked((int)0x80040064); 
-        }
-
-        public int GetCanonicalFormatEtc(ref FORMATETC formatIn, out FORMATETC formatOut) {
-            formatOut = formatIn;
-            return unchecked((int)0x8004006D); 
-        }
-
-        public void SetData(ref FORMATETC formatIn, ref STGMEDIUM medium, bool release) {
-             throw new COMException("Not Implemented", unchecked((int)0x80004001));
         }
 
         public IEnumFORMATETC EnumFormatEtc(DATADIR direction) {
@@ -107,80 +186,49 @@ namespace DropGoLine {
             throw new COMException("Not Implemented", unchecked((int)0x80004001));
         }
 
-        // ... DAdvise, etc ...
-
-        public int DAdvise(ref FORMATETC pFormatetc, ADVF advf, IAdviseSink adviseSink, out int connection) {
-             connection = 0; return unchecked((int)0x80040003); 
-        }
-        public void DUnadvise(int connection) { throw new COMException("Not Implemented", unchecked((int)0x80040003)); }
+        public void GetDataHere(ref FORMATETC format, ref STGMEDIUM medium) => throw new COMException("Not Implemented", unchecked((int)0x80004001));
+        public int GetCanonicalFormatEtc(ref FORMATETC formatIn, out FORMATETC formatOut) { formatOut = formatIn; return unchecked((int)0x8004006D); }
+        public void SetData(ref FORMATETC formatIn, ref STGMEDIUM medium, bool release) => throw new COMException("Not Implemented", unchecked((int)0x80004001));
+        public int DAdvise(ref FORMATETC pFormatetc, ADVF advf, IAdviseSink adviseSink, out int connection) { connection = 0; return unchecked((int)0x80040003); }
+        public void DUnadvise(int connection) => throw new COMException("Not Implemented", unchecked((int)0x80040003));
         public int EnumDAdvise(out IEnumSTATDATA enumAdvise) { enumAdvise = null!; return unchecked((int)0x80040003); }
 
-        // === 內部邏輯 helpers ===
+
+        // === Helpers (Unchanged) ===
+        private IntPtr GetDropFiles() {
+            int offset = 20;
+            byte[] pathBytes = Encoding.Unicode.GetBytes(_tempFilePath); 
+            int size = offset + pathBytes.Length + 2 + 2; 
+            IntPtr ptr = Marshal.AllocHGlobal(size);
+            Marshal.WriteInt32(ptr, 0, offset); 
+            Marshal.WriteInt32(ptr, 4, 0); Marshal.WriteInt32(ptr, 8, 0); 
+            Marshal.WriteInt32(ptr, 12, 0); Marshal.WriteInt32(ptr, 16, 1); 
+            Marshal.Copy(pathBytes, 0, ptr + offset, pathBytes.Length);
+            Marshal.WriteInt16(ptr + offset + pathBytes.Length, 0); 
+            Marshal.WriteInt16(ptr + offset + pathBytes.Length + 2, 0); 
+            return ptr;
+        }
 
         private IntPtr GetFileDescriptor() {
             MemoryStream ms = new MemoryStream();
             BinaryWriter bw = new BinaryWriter(ms);
-
-            bw.Write((uint)1); // cItems
-            
-            // FILEDESCRIPTORW
-            uint flags = 0x0040; // FD_FILESIZE
-            bw.Write(flags); 
-            bw.Write(new byte[16]); // clsid
-            bw.Write(0); bw.Write(0); // sizel
-            bw.Write(0); bw.Write(0); // pointl
-            bw.Write((uint)0x80); // dwFileAttributes (Normal)
-
-            bw.Write((long)0); bw.Write((long)0); bw.Write((long)0); // times
-            bw.Write((uint)(_fileSize >> 32));
-            bw.Write((uint)(_fileSize & 0xFFFFFFFF));
-
+            bw.Write((uint)1); 
+            uint flags = 0x0040; 
+            bw.Write(flags); bw.Write(new byte[16]); bw.Write(0); bw.Write(0); bw.Write(0); bw.Write(0); 
+            bw.Write((uint)0x80); 
+            bw.Write((long)0); bw.Write((long)0); bw.Write((long)0); 
+            bw.Write((uint)(_fileSize >> 32)); bw.Write((uint)(_fileSize & 0xFFFFFFFF));
             byte[] nameBytes = new byte[520];
             byte[] strBytes = Encoding.Unicode.GetBytes(_fileName);
             Array.Copy(strBytes, nameBytes, Math.Min(strBytes.Length, 520 - 2));
             bw.Write(nameBytes);
-
             byte[] data = ms.ToArray();
             IntPtr ptr = Marshal.AllocHGlobal(data.Length);
             Marshal.Copy(data, 0, ptr, data.Length);
             return ptr;
         }
-
-        // 產生 DROPFILES 結構讓 Explorer 讀取實體檔案
-        private IntPtr GetDropFiles() {
-            // DROPFILES structure
-            // DWORD pFiles; // Offset to file list
-            // POINT pt;
-            // BOOL fNC;
-            // BOOL fWide;
-            
-            // 結構大小: 20 bytes
-            int offset = 20;
-            
-            // 檔案路徑清單 (Double null terminated)
-            // _tempFilePath + \0 + \0
-            byte[] pathBytes = Encoding.Unicode.GetBytes(_tempFilePath); 
-            int size = offset + pathBytes.Length + 2 + 2; // + null char + final null char
-            
-            IntPtr ptr = Marshal.AllocHGlobal(size);
-            
-            // 寫入 Header
-            Marshal.WriteInt32(ptr, 0, offset); // pFiles
-            Marshal.WriteInt32(ptr, 4, 0); // pt.x
-            Marshal.WriteInt32(ptr, 8, 0); // pt.y
-            Marshal.WriteInt32(ptr, 12, 0); // fNC
-            Marshal.WriteInt32(ptr, 16, 1); // fWide (Unicode)
-            
-            // 寫入路徑
-            Marshal.Copy(pathBytes, 0, ptr + offset, pathBytes.Length);
-            Marshal.WriteInt16(ptr + offset + pathBytes.Length, 0); // null
-            Marshal.WriteInt16(ptr + offset + pathBytes.Length + 2, 0); // double null
-            
-            return ptr;
-        }
     }
 
-    // === COM Enumerator 實作 ===
     public class EnumFORMATETC : IEnumFORMATETC {
         private FORMATETC[] _formats;
         private int _current;
@@ -197,11 +245,8 @@ namespace DropGoLine {
                 _current++;
                 fetched++;
             }
-            
-            if (pceltFetched != null && pceltFetched.Length > 0)
-                pceltFetched[0] = fetched;
-                
-            return fetched == celt ? 0 : 1; // S_OK : S_FALSE
+            if (pceltFetched != null && pceltFetched.Length > 0) pceltFetched[0] = fetched;
+            return fetched == celt ? 0 : 1;
         }
 
         public int Skip(int celt) {
@@ -210,10 +255,7 @@ namespace DropGoLine {
              return 0;
         }
 
-        public int Reset() {
-            _current = 0;
-            return 0; // S_OK
-        }
+        public int Reset() { _current = 0; return 0; }
 
         public void Clone(out IEnumFORMATETC newEnum) {
             var copy = new EnumFORMATETC(_formats);
@@ -221,73 +263,4 @@ namespace DropGoLine {
             newEnum = copy;
         }
     }
-    
-    // === IStream Wrapper ===
-    // 將 .NET Stream 轉換為 COM IStream
-    public class IStreamWrapper : IStream {
-        private Stream _baseStream;
-
-        public IStreamWrapper(Stream stream) {
-            _baseStream = stream ?? throw new ArgumentNullException(nameof(stream));
-        }
-
-        public void Read(byte[] pv, int cb, IntPtr pcbRead) {
-            int read = _baseStream.Read(pv, 0, cb);
-            if (pcbRead != IntPtr.Zero) {
-                Marshal.WriteInt32(pcbRead, read);
-            }
-        }
-
-        public void Write(byte[] pv, int cb, IntPtr pcbWritten) {
-            _baseStream.Write(pv, 0, cb);
-             if (pcbWritten != IntPtr.Zero) {
-                Marshal.WriteInt32(pcbWritten, cb);
-            }
-        }
-
-        public void Seek(long dlibMove, int dwOrigin, IntPtr plibNewPosition) {
-             long pos = _baseStream.Seek(dlibMove, (SeekOrigin)dwOrigin);
-             if (plibNewPosition != IntPtr.Zero) {
-                Marshal.WriteInt64(plibNewPosition, pos);
-            }
-        }
-
-        public void SetSize(long libNewSize) {
-            _baseStream.SetLength(libNewSize);
-        }
-
-        public void CopyTo(IStream pstm, long cb, IntPtr pcbRead, IntPtr pcbWritten) {
-            throw new NotImplementedException();
-        }
-
-        public void Commit(int grfCommitFlags) {
-            _baseStream.Flush();
-        }
-
-        public void Revert() {
-            throw new NotImplementedException();
-        }
-
-        public void LockRegion(long libOffset, long cb, int dwLockType) {
-            throw new NotImplementedException();
-        }
-
-        public void UnlockRegion(long libOffset, long cb, int dwLockType) {
-            throw new NotImplementedException();
-        }
-
-        public void Stat(out System.Runtime.InteropServices.ComTypes.STATSTG pstatstg, int grfStatFlag) {
-            pstatstg = new System.Runtime.InteropServices.ComTypes.STATSTG {
-                type = 2, // STGTY_STREAM
-                cbSize = _baseStream.CanSeek ? _baseStream.Length : 0, 
-                grfMode = 0
-            };
-        }
-
-        public void Clone(out IStream ppstm) {
-            throw new NotImplementedException();
-        }
-    }
-
-
 }

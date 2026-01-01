@@ -28,6 +28,10 @@ namespace DropGoLine {
     // 檔案大小 (用於計算進度)
     public long FileSize { get; set; } = -1;
 
+    // 新增狀態屬性
+    public bool IsDownloaded { get; set; } = false;
+    public string? LocalFilePath { get; set; } = null;
+
     // ⚠️ 關鍵改變 1：這是卡片真正的顏色
     [Category("Appearance")]
     [Description("設定卡片的背景顏色")]
@@ -59,14 +63,15 @@ namespace DropGoLine {
     public event Action<IDataObject>? OnDataDrop;
     public event Action<string>? OnDragRequest;
     
-    public void SetContent(string displayText, ContentType type, object? data) {
+    public void SetContent(string displayText, ContentType type, object? data, bool keepPreview = false) {
         this.Text = displayText;
         this.CurrentType = type;
         this.Tag = data; 
         
-        // 🌟 FIX 1: 清除舊的圖片預覽，除非稍後被 Form1 再次設定
-        // 如果沒有這行，之前傳的圖片會一直卡在卡片上，導致文字訊息顯示錯誤
-        this.PreviewImage = null;
+        // 🌟 FIX 1: 清除舊的圖片預覽，除非稍後被 Form1 再次設定，或者顯式要求保留
+        if (!keepPreview) {
+            this.PreviewImage = null;
+        }
 
         // 根據類型變更樣式 (可選)
         if (type == ContentType.File_Offer) {
@@ -251,6 +256,39 @@ namespace DropGoLine {
             }
         }
       }
+
+      // 5. 畫已下載標記 (綠勾勾)
+      // 這段程式碼應該在 using (pen/brush/path) 區塊內，因為要用到 path clip 嗎？
+      // 上面的 using 區塊似乎在 line 257 結束了。
+      // 讓我們檢查一下 View File 的內容。
+      // line 180: using (GraphicsPath path = GetRoundedPath(rect, adjustedRadius))
+      // line 181: using (Pen pen = new Pen(targetBorderColor, targetBorderSize))
+      // line 182: using (SolidBrush brush = new SolidBrush(CardColor))
+      // {
+      //    ...
+      //    line 256: } (End of if PreviewImage==null)
+      // } (End of using blocks)
+
+      // 如果我們要把勾勾畫在最上層，可以在 using 區塊之後，但在 OnPaint 結束前。
+      // 但我們需要 e.Graphics。
+      
+      if (IsDownloaded) {
+           // 右下角畫一個綠色圓圈 + 白色勾勾
+           int size = 20;
+           Rectangle checkRect = new Rectangle(this.Width - size - 8, this.Height - size - 8, size, size);
+           
+           // 啟用消除鋸齒 (如果上面 using 結束後設定跑掉了的話)
+           e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+           using (SolidBrush brush = new SolidBrush(Color.LimeGreen)) {
+               e.Graphics.FillEllipse(brush, checkRect);
+           }
+           // 畫勾勾 (簡單兩條線)
+           using (Pen pen = new Pen(Color.White, 2)) {
+               e.Graphics.DrawLine(pen, checkRect.Left + 4, checkRect.Top + 10, checkRect.Left + 8, checkRect.Top + 14);
+               e.Graphics.DrawLine(pen, checkRect.Left + 8, checkRect.Top + 14, checkRect.Right - 5, checkRect.Top + 5);
+           }
+      }
     }
 
     // ... (GetRoundedPath)
@@ -266,32 +304,45 @@ namespace DropGoLine {
                 isDragging = true; // 🌟 FIX: 標記為拖曳，抑制 Click
 
                 // 判斷拖曳類型
-                if (CurrentType == ContentType.File_Offer) {
-                     if (Tag is string filePath && System.IO.File.Exists(filePath)) {
-                         // 檔案存在 -> 直接拖曳
-                         var dataObj = new DataObject(DataFormats.FileDrop, new string[] { filePath });
+                // 🌟 FIX: 同時檢查 File_Offer 與 File_Transferring，因為下載完成後狀態可能停留在 File_Transferring
+                if (CurrentType == ContentType.File_Offer || CurrentType == ContentType.File_Transferring) {
+                     if (IsDownloaded && !string.IsNullOrEmpty(LocalFilePath) && System.IO.File.Exists(LocalFilePath)) {
+                         // 已下載 -> 直接拖曳本機檔案 (Zero Freeze)
+                         // 🌟 FIX: 使用 SetFileDropList 以確保格式完全正確 (Explorer 偏好這個)
+                         var dataObj = new DataObject();
+                         var fileList = new System.Collections.Specialized.StringCollection();
+                         fileList.Add(LocalFilePath);
+                         dataObj.SetFileDropList(fileList);
+                         
+                         // 設定拖曳圖片
+                         Bitmap dragBmp = new Bitmap(this.Width, this.Height);
+                         this.DrawToBitmap(dragBmp, new Rectangle(0, 0, this.Width, this.Height));
+                         DragHelper.SetDragImage(dataObj, dragBmp, new Point(e.X, e.Y));
+
                          this.DoDragDrop(dataObj, DragDropEffects.Copy);
+                         return; // 結束
                      } else {
-                        // 檔案不存在 (或 Tag 不是路徑) -> 觸發下載請求
-                        string fname = Text.Replace("📄 ", "").Trim();
-                        // 觸發事件讓 Form1 處理下載
-                        OnDragRequest?.Invoke(fname);
+                         // 尚未下載 -> 禁止拖曳，或可以顯示 Tooltip 提示「請先點擊下載」
+                         return;
                      }
                 }
-                else {
-                    // 純文字拖曳
-                    string contentToDrag = "";
-                    if (CurrentType == ContentType.Text && Tag is string text) {
-                        contentToDrag = text;
-                    } else if (Tag is string s) {
-                         contentToDrag = s; // Fallback
-                    } else {
-                        contentToDrag = Text; 
-                    }
+                
+                // Fallback for Text
+                // 如果是檔案類型但沒下載，不執行拖曳 (因為要點擊下載)
+                if (CurrentType == ContentType.File_Offer || CurrentType == ContentType.File_Transferring) return;
 
-                    if (!string.IsNullOrEmpty(contentToDrag)) {
-                        this.DoDragDrop(contentToDrag, DragDropEffects.Copy | DragDropEffects.Move);
-                    }
+                // 純文字拖曳
+                string contentToDrag = "";
+                if (CurrentType == ContentType.Text && Tag is string text) {
+                     contentToDrag = text;
+                } else if (Tag is string s) {
+                     contentToDrag = s; // Fallback
+                } else {
+                     contentToDrag = Text; 
+                }
+
+                if (!string.IsNullOrEmpty(contentToDrag)) {
+                     this.DoDragDrop(contentToDrag, DragDropEffects.Copy | DragDropEffects.Move);
                 }
             }
         }
