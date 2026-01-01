@@ -70,6 +70,7 @@ namespace DropGoLine {
       this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
       this.ClientSize = new System.Drawing.Size(284, 161);
       this.Controls.Add(this.btnSave);
+      this.AcceptButton = this.btnSave; // Enter to Save
       this.Controls.Add(this.txtDeviceName);
       this.Controls.Add(this.lblDeviceName);
       this.Controls.Add(this.txtServerIP);
@@ -80,6 +81,7 @@ namespace DropGoLine {
       this.Name = "SettingsForm";
       this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
       this.Text = "其他設定";
+      this.KeyPreview = true; // Catch ESC
       this.ResumeLayout(false);
       this.PerformLayout();
 
@@ -94,6 +96,13 @@ namespace DropGoLine {
       AppSettings.Current.Save();
       MessageBox.Show("設定已儲存，請重新啟動程式以套用新設定。", "提示");
       this.Close();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e) {
+        if (e.KeyCode == Keys.Escape) {
+            this.Close();
+        }
+        base.OnKeyDown(e);
     }
   }
 }

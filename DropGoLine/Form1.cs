@@ -13,6 +13,17 @@ namespace DropGoLine {
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
+    // === Global Hotkey ===
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, int fsModifiers, int vk);
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    private const int MOD_ALT = 0x0001;
+    private const int VK_D = 0x44;
+    private const int HOTKEY_ID = 9000;
+    private const int WM_HOTKEY = 0x0312;
+
     private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     private const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
@@ -64,6 +75,7 @@ namespace DropGoLine {
       InitializeComponent();
       this.DoubleBuffered = true;
       this.SetStyle(ControlStyles.ResizeRedraw, true);
+      this.KeyPreview = true; // Enable Key Handling for ESC
 
       // Window Properties
       this.TopMost = true;
@@ -101,6 +113,9 @@ namespace DropGoLine {
       } else {
         this.BackColor = Color.FromArgb(32, 32, 32);
       }
+
+      // Register Hotkey Alt+D
+      RegisterHotKey(this.Handle, HOTKEY_ID, MOD_ALT, VK_D);
 
       int useDarkMode = 1;
       DwmSetWindowAttribute(this.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref useDarkMode, sizeof(int));
@@ -294,7 +309,28 @@ namespace DropGoLine {
           return;
         }
       }
+
+      
+      if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HOTKEY_ID) {
+          if (this.Visible) {
+              this.Hide();
+          } else {
+              this.Show();
+              this.WindowState = FormWindowState.Normal;
+              this.Activate();
+          }
+      }
+      
       base.WndProc(ref m);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e) {
+        if (e.KeyCode == Keys.Escape) {
+            this.Hide();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+        base.OnKeyDown(e);
     }
 
     protected override void OnPaint(PaintEventArgs e) {
@@ -687,7 +723,7 @@ namespace DropGoLine {
     private void ToolStripMenuItemID_Click(object? sender, EventArgs e) {
       if (!string.IsNullOrEmpty(P2PManager.Instance.CurrentCode)) {
         Clipboard.SetText(P2PManager.Instance.CurrentCode);
-        MessageBox.Show("ID 已複製到剪貼簿", "提示");
+        // MessageBox.Show("ID 已複製到剪貼簿", "提示");
       }
     }
     private void 開啟拖曳板ToolStripMenuItem_Click(object? sender, EventArgs e) {
@@ -726,6 +762,7 @@ namespace DropGoLine {
         e.Cancel = true;
         this.Hide();
       } else {
+        UnregisterHotKey(this.Handle, HOTKEY_ID);
         base.OnFormClosing(e);
       }
     }
