@@ -74,6 +74,10 @@ namespace DropGoLine {
         this.CurrentType = type;
         this.Tag = data; 
         
+        // 🌟 FIX: Reset Download State on New Content
+        this.IsDownloaded = false;
+        this.LocalFilePath = null; 
+        
         // 🌟 FIX 1: 清除舊的圖片預覽，除非稍後被 Form1 再次設定，或者顯式要求保留
         if (!keepPreview) {
             this.PreviewImage = null;
