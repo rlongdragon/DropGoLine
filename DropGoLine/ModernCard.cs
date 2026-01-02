@@ -19,17 +19,23 @@ namespace DropGoLine {
     public int BorderSize { get; set; } = 4;
 
     // 新增圖片預覽屬性
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Image? PreviewImage { get; set; } = null;
 
     // 進度條屬性 (0.0 - 1.0)
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public float Progress { get; set; } = 0f;
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color ProgressColor { get; set; } = Color.FromArgb(100, 0, 255, 0);
     
     // 檔案大小 (用於計算進度)
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public long FileSize { get; set; } = -1;
 
     // 新增狀態屬性
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public bool IsDownloaded { get; set; } = false;
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public string? LocalFilePath { get; set; } = null;
 
     // ⚠️ 關鍵改變 1：這是卡片真正的顏色

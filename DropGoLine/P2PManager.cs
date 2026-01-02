@@ -79,14 +79,7 @@ namespace DropGoLine {
       }
     }
 
-    private async Task AcceptP2PClients() {
-      while (p2pListener != null) {
-        try {
-          TcpClient client = await p2pListener.AcceptTcpClientAsync();
-          _ = Task.Run(() => HandlePeer(client));
-        } catch { break; }
-      }
-    }
+
 
     // === File Transfer Logic (Side Channel) ===
     public int StartFileServer(string filePath) {
@@ -613,8 +606,43 @@ namespace DropGoLine {
     }
     public void Disconnect() {
       try {
+        // 1. Stop Listeners
+        var listener = p2pListener;
+        p2pListener = null; // Signal loop to stop
+        listener?.Stop();
+
+        // 2. Close Server Connection
         serverClient?.Close();
+        serverClient = null;
+
+        // 3. Close All Peer Connections
+        foreach (var writer in peerWriters.Values) {
+            try { writer.Close(); } catch { }
+        }
+        peerWriters.Clear();
+        directConnectedPeers.Clear();
+
+        // 4. Reset ID
+        CurrentCode = "Offline";
+        OnIDChanged?.Invoke(this, CurrentCode);
+
       } catch { }
+    }
+
+    private async Task AcceptP2PClients() {
+      while (p2pListener != null) {
+        try {
+          TcpClient client = await p2pListener.AcceptTcpClientAsync();
+          
+          // 🌟 Connection Limit Check (Max 6 Peers)
+          if (peerWriters.Count >= 6) {
+              client.Close();
+              continue;
+          }
+
+          _ = Task.Run(() => HandlePeer(client));
+        } catch { break; }
+      }
     }
 
     private string GetLocalIPAddress() {

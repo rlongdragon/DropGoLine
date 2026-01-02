@@ -797,8 +797,12 @@ namespace DropGoLine {
     }
 
     private void 斷開連線ToolStripMenuItem_Click(object? sender, EventArgs e) {
-      P2PManager.Instance.Disconnect(); // Assume Disconnect method exists or just placeholder
-      MessageBox.Show("已嘗試斷開連線 (功能待完善)", "訊息");
+      P2PManager.Instance.Disconnect();
+      
+      // 🌟 UI Cleanup
+      pnlMembers.Controls.Clear();
+      UpdateMemberLayout();
+      this.Refresh();
     }
 
     private void 其他設定ToolStripMenuItem_Click(object? sender, EventArgs e) {
