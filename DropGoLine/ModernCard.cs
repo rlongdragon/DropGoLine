@@ -251,11 +251,19 @@ namespace DropGoLine {
         if (targetBorderSize > 0)
             e.Graphics.DrawPath(pen, path);
 
-        // 4. 繪製文字 (如果有圖片，文字顯示在下方或覆蓋? 簡單起見，沒圖片才畫文字，或者畫在角落)
-        // 為了簡單，如果沒有圖片才畫大文字，有圖片則不畫或畫小標題?
-        // 使用者希望「圖片顯示在框框」，假設是取代文字。但如果有檔名呢？
-        // 暫定：如果有 PreviewImage，就不畫中間的文字。
-        if (PreviewImage == null && !string.IsNullOrEmpty(Text)) {
+        // 4. 繪製文字與標題
+
+        // 4.1 繪製左上角裝置名稱 (標題) - 使用者要求一律顯示
+        if (!string.IsNullOrEmpty(this.Name)) {
+            using (Brush nameBrush = new SolidBrush(Color.FromArgb(180, 255, 255, 255))) // 淺白色
+            {
+                e.Graphics.DrawString(this.Name, this.Font, nameBrush, 10, 6); 
+            }
+        }
+
+        // 4.2 繪製中間內容
+        // 僅當沒有圖片，且文字內容不等於裝置名稱時才顯示 (避免初始狀態重複)
+        if (PreviewImage == null && !string.IsNullOrEmpty(Text) && Text != this.Name) {
             StringFormat sf = new StringFormat();
             sf.Alignment = StringAlignment.Center;
             sf.LineAlignment = StringAlignment.Center;

@@ -85,6 +85,9 @@ namespace DropGoLine {
 
     public Form1() {
       InitializeComponent();
+      // 因為 ModernCard 會繪製 Name，這裡將靜態卡片的 Name 清空以避免顯示 "modernCard1"
+      modernCard1.Name = "";
+
       this.DoubleBuffered = true;
       this.SetStyle(ControlStyles.ResizeRedraw, true);
       this.KeyPreview = true; // Enable Key Handling for ESC
