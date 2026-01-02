@@ -21,6 +21,13 @@ namespace DropGoLine {
 
     public bool AutoClipboardCopy { get; set; } = false;
     public bool AutoClipboardSync { get; set; } = false;
+    
+    // Privacy & Auto Connect
+    public bool EnableAutoReconnect { get; set; } = true;
+    public bool AllowDiscovery { get; set; } = true;
+
+    // Persist known friends for Auto Reconnect
+    public System.Collections.Generic.List<string> KnownPeers { get; set; } = new System.Collections.Generic.List<string>();
 
     private static string ConfigPath => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
 

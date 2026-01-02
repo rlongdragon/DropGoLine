@@ -27,6 +27,7 @@ namespace DropGoLine {
     private TcpClient? serverClient;
     private StreamReader? serverReader;
     private StreamWriter? serverWriter;
+    private TaskCompletionSource<string>? _autoConnectTcs; // Added for AutoConnect
     private TcpListener? p2pListener;
     private int localP2PPort;
     private ConcurrentDictionary<string, StreamWriter> peerWriters = new ConcurrentDictionary<string, StreamWriter>();
@@ -248,11 +249,53 @@ namespace DropGoLine {
         serverWriter = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
 
         string localIP = GetLocalIPAddress();
-        await serverWriter.WriteLineAsync($"REGISTER|{AppSettings.Current.DeviceName}|{localIP}|{localP2PPort}");
 
+        string isDiscoverable = AppSettings.Current.AllowDiscovery ? "1" : "0";
+        await serverWriter.WriteLineAsync($"REGISTER|{AppSettings.Current.DeviceName}|{localIP}|{localP2PPort}|{isDiscoverable}");
+        
         _ = Task.Run(ReadServerMessages);
         _ = Task.Run(SendHeartbeat);
-        await serverWriter.WriteLineAsync("CREATE");
+
+        // 🌟 Auto Reconnect Logic
+        bool joinedViaAutoConnect = false;
+
+        if (AppSettings.Current.EnableAutoReconnect && AppSettings.Current.KnownPeers.Count > 0) {
+            // Batch Query
+            string query = string.Join(",", AppSettings.Current.KnownPeers);
+            // Limit query length if needed? Server handles split.
+            await serverWriter.WriteLineAsync($"QUERY_PEERS|{query}");
+
+            // Wait for PEERS_FOUND response (timeout 2s)
+            // We use a simple TaskCompletionSource mechanism or polling?
+            // Since ReadServerMessages is running in parallel, we can use a specialized TCS.
+            _autoConnectTcs = new TaskCompletionSource<string>();
+            var timeoutTask = Task.Delay(2000); // 2s timeout
+            var completedTask = await Task.WhenAny(_autoConnectTcs.Task, timeoutTask);
+
+            if (completedTask == _autoConnectTcs.Task) {
+                 string result = await _autoConnectTcs.Task;
+                 // Result format: Name:RoomCode:Count
+                 // Just take the first one
+                 if (!string.IsNullOrEmpty(result)) {
+                     var parts = result.Split(':');
+                     if (parts.Length >= 2) {
+                        string roomCode = parts[1];
+                        int count = 0;
+                        if (parts.Length >= 3) int.TryParse(parts[2], out count);
+                        
+                        // Capacity Check (Max 6 peers = 7 total members)
+                        if (count < 7) {
+                            await serverWriter.WriteLineAsync($"JOIN|{roomCode}");
+                            joinedViaAutoConnect = true;
+                        }
+                     }
+                 }
+            }
+        }
+
+        if (!joinedViaAutoConnect) {
+             await serverWriter.WriteLineAsync("CREATE");
+        }
 
       } catch { } // Offline mode
     }
@@ -277,6 +320,13 @@ namespace DropGoLine {
                  string remoteName = parts[5];
                  OnPeerConnected?.Invoke(this, remoteName);
             }
+           } else if (cmd == "PEERS_FOUND" && parts.Length >= 2) {
+                // Found: Name:RoomCode:Count,Name:RoomCode:Count
+                string payload = parts[1];
+                string[] found = payload.Split(',');
+                if (found.Length > 0) {
+                    _autoConnectTcs?.TrySetResult(found[0]); // Pass Name:Code:Count
+                }
           } else if (cmd == "RELAY" && parts.Length >= 3) {
             string sender = parts[1];
             string rawContent = string.Join("|", parts.Skip(2)); // Rejoin content in case it contains |
@@ -322,6 +372,13 @@ namespace DropGoLine {
             if (!string.IsNullOrEmpty(remoteName)) {
               peerWriters.TryAdd(remoteName, writer);
               directConnectedPeers.TryAdd(remoteName, true);
+              
+              // 🌟 Save to KnownPeers
+              if (!AppSettings.Current.KnownPeers.Contains(remoteName)) {
+                  AppSettings.Current.KnownPeers.Add(remoteName);
+                  AppSettings.Current.Save();
+              }
+
               OnPeerConnected?.Invoke(this, remoteName);
             }
           } else if (parts[0] == "MSG") {
@@ -339,6 +396,16 @@ namespace DropGoLine {
         if (remoteName != "Unknown") {
           peerWriters.TryRemove(remoteName, out _);
           directConnectedPeers.TryRemove(remoteName, out _);
+          
+          // 🌟 History Logic: Remove from KnownPeers on Disconnect
+          // If we disconnect (e.g. app closed), we don't want to auto-reconnect to this specific one next time 
+          // unless they are still "active" in our session context?
+          // User Requirement: "If I disconnect B -> Next time don't connect B"
+          if (AppSettings.Current.KnownPeers.Contains(remoteName)) {
+              AppSettings.Current.KnownPeers.Remove(remoteName);
+              AppSettings.Current.Save();
+          }
+
           OnPeerDisconnected?.Invoke(this, remoteName);
         }
         client.Close();

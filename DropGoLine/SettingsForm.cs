@@ -10,6 +10,8 @@ namespace DropGoLine {
     private TextBox txtDeviceName; // Added
     private CheckBox chkAutoCopy;
     private CheckBox chkAutoSync;
+    private CheckBox chkEnableAutoReconnect; // Added
+    private CheckBox chkAllowDiscovery; // Added
     private Button btnSave;
 
     public SettingsForm() {
@@ -23,6 +25,8 @@ namespace DropGoLine {
       this.txtDeviceName = new System.Windows.Forms.TextBox(); // Added
       this.chkAutoCopy = new System.Windows.Forms.CheckBox();
       this.chkAutoSync = new System.Windows.Forms.CheckBox();
+      this.chkEnableAutoReconnect = new System.Windows.Forms.CheckBox(); // Added
+      this.chkAllowDiscovery = new System.Windows.Forms.CheckBox(); // Added
       this.btnSave = new System.Windows.Forms.Button();
       this.SuspendLayout();
       // 
@@ -77,6 +81,26 @@ namespace DropGoLine {
       this.chkAutoSync.TabIndex = 5;
       this.chkAutoSync.Text = "本機複製自動發送";
       this.chkAutoSync.UseVisualStyleBackColor = true;
+      //
+      // chkEnableAutoReconnect
+      //
+      this.chkEnableAutoReconnect.AutoSize = true;
+      this.chkEnableAutoReconnect.Location = new System.Drawing.Point(33, 180);
+      this.chkEnableAutoReconnect.Name = "chkEnableAutoReconnect";
+      this.chkEnableAutoReconnect.Size = new System.Drawing.Size(150, 19);
+      this.chkEnableAutoReconnect.TabIndex = 6;
+      this.chkEnableAutoReconnect.Text = "啟動時自動重連好友";
+      this.chkEnableAutoReconnect.UseVisualStyleBackColor = true;
+      //
+      // chkAllowDiscovery
+      //
+      this.chkAllowDiscovery.AutoSize = true;
+      this.chkAllowDiscovery.Location = new System.Drawing.Point(33, 205);
+      this.chkAllowDiscovery.Name = "chkAllowDiscovery";
+      this.chkAllowDiscovery.Size = new System.Drawing.Size(150, 19);
+      this.chkAllowDiscovery.TabIndex = 7;
+      this.chkAllowDiscovery.Text = "允許好友自動連線到我";
+      this.chkAllowDiscovery.UseVisualStyleBackColor = true;
 
       // 
       // btnSave
@@ -84,10 +108,13 @@ namespace DropGoLine {
       // 
       // btnSave
       // 
-      this.btnSave.Location = new System.Drawing.Point(85, 190); // Adjusted Y
+      // 
+      // btnSave
+      // 
+      this.btnSave.Location = new System.Drawing.Point(85, 240); // Adjusted Y
       this.btnSave.Name = "btnSave";
       this.btnSave.Size = new System.Drawing.Size(100, 30);
-      this.btnSave.TabIndex = 4; // Adjusted TabIndex
+      this.btnSave.TabIndex = 8; // Adjusted TabIndex
       this.btnSave.Text = "儲存";
       this.btnSave.UseVisualStyleBackColor = true;
       this.btnSave.Click += new System.EventHandler(this.BtnSave_Click);
@@ -98,6 +125,8 @@ namespace DropGoLine {
       this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
       this.Controls.Add(this.chkAutoSync);
       this.Controls.Add(this.chkAutoCopy);
+      this.Controls.Add(this.chkEnableAutoReconnect); // Added
+      this.Controls.Add(this.chkAllowDiscovery); // Added
       this.Controls.Add(this.btnSave);
       this.AcceptButton = this.btnSave; // Enter to Save
       this.Controls.Add(this.txtDeviceName);
@@ -110,7 +139,7 @@ namespace DropGoLine {
       this.Name = "SettingsForm";
       this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
       this.Text = "其他設定";
-      this.ClientSize = new System.Drawing.Size(284, 240);
+      this.ClientSize = new System.Drawing.Size(284, 300); // 1. Increased Height
       this.KeyPreview = true; // Catch ESC
       this.ResumeLayout(false);
       this.PerformLayout();
@@ -118,8 +147,11 @@ namespace DropGoLine {
       // Load Settings
       this.txtServerIP.Text = AppSettings.Current.ServerIP;
       this.txtDeviceName.Text = AppSettings.Current.DeviceName;
+      this.txtDeviceName.Text = AppSettings.Current.DeviceName;
       this.chkAutoCopy.Checked = AppSettings.Current.AutoClipboardCopy;
       this.chkAutoSync.Checked = AppSettings.Current.AutoClipboardSync;
+      this.chkEnableAutoReconnect.Checked = AppSettings.Current.EnableAutoReconnect;
+      this.chkAllowDiscovery.Checked = AppSettings.Current.AllowDiscovery;
     }
 
     private void BtnSave_Click(object sender, EventArgs e) {
@@ -127,6 +159,8 @@ namespace DropGoLine {
       AppSettings.Current.DeviceName = txtDeviceName.Text;
       AppSettings.Current.AutoClipboardCopy = chkAutoCopy.Checked;
       AppSettings.Current.AutoClipboardSync = chkAutoSync.Checked;
+      AppSettings.Current.EnableAutoReconnect = chkEnableAutoReconnect.Checked;
+      AppSettings.Current.AllowDiscovery = chkAllowDiscovery.Checked;
       AppSettings.Current.Save();
       MessageBox.Show("設定已儲存，請重新啟動程式以套用新設定。", "提示");
       this.Close();
