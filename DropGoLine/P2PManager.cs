@@ -586,6 +586,37 @@ namespace DropGoLine {
         Broadcast("IMG_OFFER", fname, $"{size.ToString()}|{base64Thumb}");
     }
 
+    public void SendImageOfferDirect(string targetName, string filePath) {
+        if (!File.Exists(filePath)) return;
+        
+        string fname = Path.GetFileName(filePath);
+        long size = new FileInfo(filePath).Length;
+        
+        // Generate Thumbnail
+        string base64Thumb = "";
+        try {
+            using (Image img = Image.FromFile(filePath)) {
+                // Resize to max 200x200
+                int max = 200;
+                float ratio = Math.Min((float)max / img.Width, (float)max / img.Height);
+                int w = (int)(img.Width * ratio);
+                int h = (int)(img.Height * ratio);
+                
+                using (Bitmap thumb = new Bitmap(img, w, h)) 
+                using (MemoryStream ms = new MemoryStream()) {
+                    thumb.Save(ms, System.Drawing.Imaging.ImageFormat.Jpeg);
+                    base64Thumb = Convert.ToBase64String(ms.ToArray());
+                }
+            }
+        } catch { }
+
+        // Start File Server
+        StartFileServer(filePath);
+        
+        // Direct Send IMG_OFFER
+        BroadcastDirect(targetName, $"IMG_OFFER|{fname}|{size}|{base64Thumb}");
+    }
+
     public void BroadcastDirect(string targetName, string payload) {
       if (peerWriters.TryGetValue(targetName, out var writer)) {
         writer.WriteLine($"MSG|{CurrentCode}|{AppSettings.Current.DeviceName}|{payload}");

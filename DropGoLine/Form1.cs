@@ -518,12 +518,79 @@ namespace DropGoLine {
       // Wire up Click Event
       newCard.Click += OnCardClick;
       newCard.OnDragRequest += HandleDragRequest;
+      // 🌟 Wire up Drop Event for Single Peer Transfer
+      newCard.OnDataDrop += (data) => HandlePeerDrop(name, data);
 
       pnlMembers.Controls.Add(newCard);
       newCard.BringToFront();
 
       UpdateMemberLayout();
       this.Refresh();
+    }
+
+    private void HandlePeerDrop(string targetName, IDataObject data) {
+         string text = "";
+         // 1. Check for File Drop
+         if (data.GetDataPresent(DataFormats.FileDrop)) {
+            string[]? files = (string[]?)data.GetData(DataFormats.FileDrop);
+            if (files != null && files.Length > 0) {
+               string path = files[0];
+               string ext = System.IO.Path.GetExtension(path).ToLower();
+               
+               if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp") {
+                   // Image Direct Offer
+                   P2PManager.Instance.SendImageOfferDirect(targetName, path);
+               } else {
+                   // File Direct Offer (Force Relay for stability or just direct offer?)
+                   // Implementation Plan said: StartRelaySender(target, filePath)
+                   // But wait, StartRelaySender sends PUSH? No, it starts a channel.
+                   // The original "StartRelaySender" sends a FILE_RELAY_READY.
+                   // Does it offer? 
+                   // Let's check P2PManager.StartRelaySender logic again.
+                   // It sends: BroadcastDirect(targetPeer, $"FILE_RELAY_READY|...");
+                   // So it notifies the peer to download immediately?
+                   // Yes, P2PManager Line 174: BroadcastDirect...
+                   // User wants "Offer" model?
+                   // No, user said "Drag to specific device". Usually implies sending it.
+                   // Existing ProcessFileDrop uses StartFileServer + Broadcast("FILE_OFFER").
+                   // If we want "Single Peer Offer", we should behave similar to FILE_OFFER but only to one person.
+                   
+                   // Let's look at P2PManager again. 
+                   // FILE_OFFER expects the receiver to click download? 
+                   // Users usually want automatic transfer or at least an offer that only THEY see.
+                   
+                   // Plan said: "Directly call P2PManager.StartRelaySender(peerName, filePath)"
+                   // This pushes the file (or at least the ready signal) via Relay.
+                   // This seems robust.
+                   
+                   _ = Task.Run(() => P2PManager.Instance.StartRelaySender(targetName, path));
+               }
+               return;
+            }
+         }
+         
+         // 2. Check for Text
+        if (data.GetDataPresent(DataFormats.UnicodeText)) {
+          text = data.GetData(DataFormats.UnicodeText) as string ?? "";
+        } else if (data.GetDataPresent(DataFormats.Text)) {
+          text = data.GetData(DataFormats.Text) as string ?? "";
+        }
+
+        if (!string.IsNullOrEmpty(text)) {
+            // Check if it's a file path text
+             if (System.IO.File.Exists(text)) {
+                 string path = text;
+                 string ext = System.IO.Path.GetExtension(path).ToLower();
+                  if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp") {
+                       P2PManager.Instance.SendImageOfferDirect(targetName, path);
+                   } else {
+                       _ = Task.Run(() => P2PManager.Instance.StartRelaySender(targetName, path));
+                   }
+             } else {
+                 // Text Message Direct
+                 P2PManager.Instance.BroadcastDirect(targetName, $"TEXT|{text}");
+             }
+        }
     }
 
     private TaskCompletionSource<string>? downloadHandshakeTcs;
