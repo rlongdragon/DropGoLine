@@ -74,6 +74,15 @@ namespace DropGoLine {
     // === Clipboard Logic ===
     private bool isInternalClipboardChange = false;
     private string lastReceivedClipboardText = "";
+    private string lastReceivedClipboardHash = "";
+
+    private string ComputeHash(string input) {
+        using (System.Security.Cryptography.SHA256 sha256 = System.Security.Cryptography.SHA256.Create()) {
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(input);
+            byte[] hash = sha256.ComputeHash(bytes);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        }
+    }
 
     // === Animation Variables ===
     private System.Windows.Forms.Timer widthAnimTimer;
@@ -180,15 +189,24 @@ namespace DropGoLine {
               // === Auto Clipboard Copy Logic ===
               if (msg.Type == ModernCard.ContentType.Text && AppSettings.Current.AutoClipboardCopy) {
                   // Avoid re-broadcasting what we just received
-                  if (msg.Content != lastReceivedClipboardText) {
+                  string receivedHash = ComputeHash(msg.Content);
+                  string currentClipboardHash = "";
+                  try {
+                      if (Clipboard.ContainsText()) {
+                          currentClipboardHash = ComputeHash(Clipboard.GetText());
+                      }
+                  } catch { }
+
+                  // Loop Prevention Logic:
+                  // 1. If received content is same as what we just received (duplicate msg), ignore.
+                  // 2. If received content is same as what is ALREADY in clipboard (maybe we sent it?), ignore.
+                  if (receivedHash != lastReceivedClipboardHash && receivedHash != currentClipboardHash) {
                       lastReceivedClipboardText = msg.Content;
+                      lastReceivedClipboardHash = receivedHash;
                       isInternalClipboardChange = true;
                       try {
                           Clipboard.SetText(msg.Content);
                       } catch { }
-                      // Reset flag after a short delay or assume next WM_CLIPBOARDUPDATE needs to see this
-                      // Since SetText is synchronous, WM_CLIPBOARDUPDATE will fire immediately after.
-                      // We handle the flag reset in WndProc or just logic.
                   }
               }
 
@@ -365,7 +383,9 @@ namespace DropGoLine {
                  try {
                      if (Clipboard.ContainsText()) {
                          string text = Clipboard.GetText();
-                         if (!string.IsNullOrEmpty(text) && text != lastReceivedClipboardText) {
+                         if (!string.IsNullOrEmpty(text)) {
+                             string currentHash = ComputeHash(text);
+                             if (currentHash != lastReceivedClipboardHash) {
                              // This is a local copy action
                              // Mark as ours to avoid echo if it comes back (conceptually)
                              // But actually we just broadcast.
@@ -375,6 +395,7 @@ namespace DropGoLine {
                              // Debounce or simple check?
                              // Just broadcast.
                              P2PManager.Instance.Broadcast("TEXT", text);
+                         }
                          }
                      }
                  } catch { } // Clipboard busy
