@@ -67,6 +67,7 @@ namespace DropGoLine {
             this.StartPosition = FormStartPosition.CenterScreen;
 
             InitializeCustomScrollLayout();
+            InitializeAnimation(); // 🌟 Init Animation
             LoadHistory(); // Load existing items
             
             HistoryManager.Instance.OnHistoryAdded += OnHistoryAdded;
@@ -242,6 +243,53 @@ namespace DropGoLine {
             }
         }
 
+        // Resize Logic
+        private const int HTLEFT = 10;
+        private const int HTRIGHT = 11;
+        private const int HTTOP = 12;
+        private const int HTTOPLEFT = 13;
+        private const int HTTOPRIGHT = 14;
+        private const int HTBOTTOM = 15;
+        private const int HTBOTTOMLEFT = 16;
+        private const int HTBOTTOMRIGHT = 17;
+        private const int WM_NCHITTEST = 0x84;
+
+        protected override void WndProc(ref Message m) {
+            base.WndProc(ref m);
+            if (m.Msg == WM_NCHITTEST) {
+                Point cursor = this.PointToClient(Cursor.Position);
+                int tolerance = 10;
+
+                if (cursor.Y >= this.Height - tolerance && cursor.X >= this.Width - tolerance) {
+                    m.Result = (IntPtr)HTBOTTOMRIGHT;
+                } else if (cursor.X >= this.Width - tolerance) {
+                    m.Result = (IntPtr)HTRIGHT;
+                } else if (cursor.Y >= this.Height - tolerance) {
+                    m.Result = (IntPtr)HTBOTTOM;
+                } else if (cursor.X <= tolerance) {
+                    m.Result = (IntPtr)HTLEFT;
+                } else if (cursor.Y <= tolerance) { // Removed Top Resize to avoid conflict with DragBar? No, fine.
+                     m.Result = (IntPtr)HTTOP;
+                }
+            }
+        }
+
+        protected override void OnResize(EventArgs e) {
+            base.OnResize(e);
+            if (dragBarRect.Width > 0 && this.Width > 0) {
+                 int barWidth = 80;
+                 dragBarRect = new Rectangle((this.ClientSize.Width - barWidth) / 2, 10, barWidth, 5);
+            }
+            if (flowPanel != null) {
+                 flowPanel.MaximumSize = new Size(this.Width - 20, 0); // Update constraint
+                 // Update children width
+                 foreach (Control c in flowPanel.Controls) {
+                     c.Width = flowPanel.Width - 10; 
+                 }
+                 this.Invalidate();
+            }
+        }
+
         protected override void OnMouseUp(MouseEventArgs e) {
             base.OnMouseUp(e);
             if (isDraggingWindow) {
@@ -265,6 +313,32 @@ namespace DropGoLine {
         // Let's rely on Reloading? No, flickering.
         // I will add a method `AddItem` and let `HistoryManager` event trigger it.
         
+        // Animation Timer
+        private System.Windows.Forms.Timer scrollAnimTimer;
+        private int targetScrollTop;
+        
+        // Add Init to Constructor
+        private void InitializeAnimation() {
+            scrollAnimTimer = new System.Windows.Forms.Timer();
+            scrollAnimTimer.Interval = 10; // 60fps
+            scrollAnimTimer.Tick += ScrollAnimTimer_Tick;
+        }
+
+        private void ScrollAnimTimer_Tick(object? sender, EventArgs e) {
+            if (flowPanel == null) return;
+            
+            // Simple Lerp
+            int current = flowPanel.Top;
+            int dist = targetScrollTop - current;
+            
+            if (Math.Abs(dist) < 2) {
+                flowPanel.Top = targetScrollTop;
+                scrollAnimTimer.Stop();
+            } else {
+                flowPanel.Top = current + dist / 6; // Ease out
+            }
+        }
+
         public void AddItem(HistoryItem item) {
              if (this.InvokeRequired) {
                  this.Invoke(new Action<HistoryItem>(AddItem), item);
@@ -312,12 +386,21 @@ namespace DropGoLine {
 
              flowPanel.Controls.Add(card);
              
-             // Auto Scroll Bottom?
-             // If we are at bottom, keep at bottom?
-             // Simple: Scroll to it.
+             // Trigger Scroll Animation
              int minTop = scrollContainer.Height - flowPanel.Height;
-             if (minTop < 0) flowPanel.Top = minTop;
+             if (minTop > 0) minTop = 0; // Content too small, align top
+             
+             // If we were at bottom (or near), auto scroll to new bottom
+             // Actually, history usually forces scroll to bottom on new item
+             targetScrollTop = minTop;
+             
+             // If this is initial load loop, don't animate every item, just jump?
+             // Or check if Form is visible?
+             if (this.Visible && scrollAnimTimer != null) {
+                 scrollAnimTimer.Start();
+             } else {
+                 flowPanel.Top = targetScrollTop; // Instant layout for initial load or hidden form
+             }
         }
-
     }
 }

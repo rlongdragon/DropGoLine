@@ -489,9 +489,27 @@ namespace DropGoLine {
         HistoryManager.Instance.ClearAllHistory();
     }
 
+    private Dictionary<string, HistoryForm> openHistoryForms = new Dictionary<string, HistoryForm>();
+
     private void ShowHistory(string peerName) {
+        if (openHistoryForms.ContainsKey(peerName)) {
+            var existing = openHistoryForms[peerName];
+            if (existing.IsDisposed) {
+                openHistoryForms.Remove(peerName);
+            } else {
+                existing.BringToFront();
+                existing.Focus();
+                return;
+            }
+        }
+
         HistoryForm form = new HistoryForm(peerName);
-        form.Show(this); // Show as modeless or modal? Modeless lets them keep chatting.
+        openHistoryForms[peerName] = form;
+        form.FormClosed += (s, e) => {
+            if (openHistoryForms.ContainsKey(peerName))
+                openHistoryForms.Remove(peerName);
+        };
+        form.Show(this);
     }
 
     private void AddMember(string name) {
@@ -515,7 +533,7 @@ namespace DropGoLine {
       newCard.Visible = true;
 
       // Wire up Click Event
-      newCard.Click += OnCardClick;
+      newCard.MouseClick += OnCardClick;
 
       // 🌟 Wire up Drop Event for Single Peer Transfer
       newCard.OnDataDrop += (data) => HandlePeerDrop(name, data);
@@ -605,15 +623,29 @@ namespace DropGoLine {
 
 
 
-    private void OnCardClick(object? sender, EventArgs e) {
+    private void OnCardClick(object? sender, MouseEventArgs e) {
+      if (e.Button != MouseButtons.Left) return;
+
       var card = sender as ModernCard;
       if (card == null || card.CurrentType == ModernCard.ContentType.None)
         return;
 
       if (card.CurrentType == ModernCard.ContentType.Text) {
         string text = card.Tag as string ?? card.Text;
-        Clipboard.SetText(text);
-        // Toast logic or simple feedback
+        
+        // 🌟 Duplicate Copy Prevention
+        string newHash = ComputeHash(text);
+        string currentHash = "";
+        try {
+            if (Clipboard.ContainsText()) {
+               currentHash = ComputeHash(Clipboard.GetText());
+            }
+        } catch {}
+
+        if (newHash != currentHash) {
+             Clipboard.SetText(text);
+             // Toast logic or simple feedback
+        }
       } 
       else if (card.CurrentType == ModernCard.ContentType.File_Offer) {
         // 🌟 Click-to-Download Logic

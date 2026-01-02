@@ -240,9 +240,9 @@ namespace DropGoLine {
 
         // 2. 畫圖片預覽 (如果有)
         if (PreviewImage != null) {
-            // 設定圖片繪製區域 (保留邊距)
+            // 設定圖片繪製區域 (保留邊距 10px)
             RectangleF imgRect = rect;
-            imgRect.Inflate(-5, -5); 
+            imgRect.Inflate(-10, -10); 
             
             // 保持比例繪製
             // 計算縮放比例
@@ -278,14 +278,19 @@ namespace DropGoLine {
 
         // 4.2 繪製中間內容
         // 僅當沒有圖片，且文字內容不等於裝置名稱時才顯示 (避免初始狀態重複)
+        // 🌟 FIX: Change 'else if' to 'if' so it runs even if Name is present. Check PreviewImage too.
         if (PreviewImage == null && !string.IsNullOrEmpty(Text) && Text != this.Name) {
             StringFormat sf = new StringFormat();
             sf.Alignment = StringAlignment.Center;
             sf.LineAlignment = StringAlignment.Center;
             sf.Trimming = StringTrimming.EllipsisCharacter;
 
+            // Apply 10px Padding
+            RectangleF textRect = rect;
+            textRect.Inflate(-10, -10);
+
             using (Brush textBrush = new SolidBrush(this.ForeColor)) {
-                e.Graphics.DrawString(Text, this.Font, textBrush, rect, sf);
+                e.Graphics.DrawString(Text, this.Font, textBrush, textRect, sf);
             }
         }
       }
