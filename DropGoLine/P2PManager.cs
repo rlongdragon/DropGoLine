@@ -254,7 +254,10 @@ namespace DropGoLine {
 
         if (AppSettings.Current.EnableAutoReconnect && AppSettings.Current.KnownPeers.Count > 0) {
             // Batch Query
-            string query = string.Join(",", AppSettings.Current.KnownPeers);
+            string query = "";
+            lock (AppSettings.Current.KnownPeers) {
+                query = string.Join(",", AppSettings.Current.KnownPeers);
+            }
             // Limit query length if needed? Server handles split.
             await serverWriter.WriteLineAsync($"QUERY_PEERS|{query}");
 
@@ -363,13 +366,23 @@ namespace DropGoLine {
           if (parts[0] == "NAME" && parts.Length >= 2) {
             remoteName = parts.Length >= 3 ? parts[2].Trim() : parts[1].Trim();
             if (!string.IsNullOrEmpty(remoteName)) {
+              // 🌟 Prevent Self-Connection Loop
+              if (remoteName == AppSettings.Current.DeviceName) {
+                  client.Close();
+                  return;
+              }
+
               peerWriters.TryAdd(remoteName, writer);
               directConnectedPeers.TryAdd(remoteName, true);
               
-              // 🌟 Save to KnownPeers
-              if (!AppSettings.Current.KnownPeers.Contains(remoteName)) {
-                  AppSettings.Current.KnownPeers.Add(remoteName);
-                  AppSettings.Current.Save();
+              // 🌟 Save to KnownPeers (Thread-Safe)
+              lock (AppSettings.Current.KnownPeers) {
+                  if (!AppSettings.Current.KnownPeers.Contains(remoteName)) {
+                      AppSettings.Current.KnownPeers.Add(remoteName);
+                      // Use a simplified save or try/catch to avoid IO contention if possible, 
+                      // but lock helps serialization.
+                      AppSettings.Current.Save();
+                  }
               }
 
               OnPeerConnected?.Invoke(this, remoteName);
@@ -394,9 +407,15 @@ namespace DropGoLine {
           // If we disconnect (e.g. app closed), we don't want to auto-reconnect to this specific one next time 
           // unless they are still "active" in our session context?
           // User Requirement: "If I disconnect B -> Next time don't connect B"
-          if (AppSettings.Current.KnownPeers.Contains(remoteName)) {
-              AppSettings.Current.KnownPeers.Remove(remoteName);
-              AppSettings.Current.Save();
+          // 🌟 History Logic: Remove from KnownPeers on Disconnect
+          // If we disconnect (e.g. app closed), we don't want to auto-reconnect to this specific one next time 
+          // unless they are still "active" in our session context?
+          // User Requirement: "If I disconnect B -> Next time don't connect B"
+          lock (AppSettings.Current.KnownPeers) {
+              if (AppSettings.Current.KnownPeers.Contains(remoteName)) {
+                  AppSettings.Current.KnownPeers.Remove(remoteName);
+                  AppSettings.Current.Save();
+              }
           }
 
           OnPeerDisconnected?.Invoke(this, remoteName);
@@ -436,6 +455,9 @@ namespace DropGoLine {
           Type = ModernCard.ContentType.Text,
           Content = text
         });
+        
+        // Log History (Incoming Text)
+        HistoryManager.Instance.AddRecord(sender, true, "Text", text);
       } else if (type == "FILE_OFFER") {
         string fname = parts.Length > 1 ? parts[1] : "Unknown";
         string size = parts.Length > 2 ? parts[2] : "0";
@@ -445,6 +467,9 @@ namespace DropGoLine {
           Content = fname,
           Tag = size
         });
+
+        // Log History (Incoming File Offer)
+        HistoryManager.Instance.AddRecord(sender, true, "File", fname);
       } else if (type == "FILE_REQ") {
         // Sender requested file.
         // STRATEGY: Prefer Relay for reliability given the user's request.
@@ -528,10 +553,19 @@ namespace DropGoLine {
     }
 
     public void Broadcast(string type, string content, string extra = "") {
+      string originalContent = content; // Keep original for history logging
       string myName = AppSettings.Current.DeviceName;
       
       if (type == "TEXT") {
           content = Convert.ToBase64String(Encoding.UTF8.GetBytes(content));
+          
+          // Log Log History (Outgoing Text - Broadcast)
+          // Since we don't know exactly who receives it in Broadcast, we might not log it per peer here?
+          // Or we can iterate known peers? 
+          // Actually Broadcast iterates `peerWriters`.
+          // Let's log inside the loop for each connected peer.
+      } else if (type == "FILE_OFFER") {
+          // Log History (Outgoing File Offer - Broadcast)
       }
 
       string payload = $"{type}|{content}";
@@ -542,14 +576,26 @@ namespace DropGoLine {
       foreach (var kvp in peerWriters) {
         try {
           kvp.Value.WriteLine($"MSG|{CurrentCode}|{myName}|{payload}");
+          
+          // Log per peer
+          string hType = (type == "TEXT") ? "Text" : (type == "FILE_OFFER" ? "File" : "Other");
+          string hContent = originalContent; 
+          HistoryManager.Instance.AddRecord(kvp.Key, false, hType, hContent);
+          
         } catch { }
       }
 
       // 2. Send via Relay (Only Text and File Offers, Binary handled separately if implementation needed)
-      // If type is FILE_OFFER, we should probably encode file if we want Relay support.
-      // For now, we only support Side Channel for Files.
       if (serverWriter != null && type != "FILE_PORT") {
         serverWriter.WriteLine($"RELAY|{payload}");
+        // Note: Relay broadcasts to everyone in room, we can't easily log "to whom" unless we know who is in room.
+        // But for History per peer, we usually only care about 1:1 or known peers.
+        // If we broadcast to room, maybe we should log to "Everyone" or just rely on Direct Peers logging?
+        // User asked for "History of message ... with a specific peer".
+        // Use "Broadcast" usually implies sending to all connected. 
+        // If we are relaying, we might not know who received it until they reply. 
+        // So for now, only log for direct connected peers in the loop above is safe.
+        // IF we want to log for relay messages, we assume it goes to all "KnownPeers"? No that's noisy.
       }
     }
 
@@ -584,6 +630,10 @@ namespace DropGoLine {
         // IMG_OFFER|FileName|Size|Base64
         // Use BroadcastDirect logic? Or Broadcast to all?
         Broadcast("IMG_OFFER", fname, $"{size.ToString()}|{base64Thumb}");
+        
+        // Log History (Image Offer - Broadcast)
+        // Handled inside Broadcast loop for direct peers.
+
     }
 
     public void SendImageOfferDirect(string targetName, string filePath) {
@@ -618,15 +668,61 @@ namespace DropGoLine {
     }
 
     public void BroadcastDirect(string targetName, string payload) {
+      // 🌟 Fix: Encode TEXT to Base64 if needed to match Receiver expectation
+      // Payload comes in as "TYPE|CONTENT..."
+      // But wait, the payload argument usually assumes "Raw Content" for helpers?
+      // No, existing calls to BroadcastDirect pass "TEXT|Hello".
+      // We need to intercept "TEXT|" and encode the rest.
+      
+      string finalPayload = payload;
+      string type = "";
+      string content = "";
+      
+      var parts = payload.Split(new char[]{'|'}, 2); // Split only on first |
+      if (parts.Length > 0) type = parts[0];
+      if (parts.Length > 1) content = parts[1];
+
+      if (type == "TEXT") {
+          // Check if already Base64? Difficult. 
+          // Assume Input from Form1 is Raw Plain Text.
+          // Encode it.
+          string encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(content));
+          finalPayload = $"TEXT|{encoded}";
+          
+          // Log History using RAW content
+          HistoryManager.Instance.AddRecord(targetName, false, "Text", content);
+      } else if (type == "FILE_OFFER" || type == "IMG_OFFER") {
+           HistoryManager.Instance.AddRecord(targetName, false, type == "IMG_OFFER" ? "Image" : "File", content);
+      }
+
       if (peerWriters.TryGetValue(targetName, out var writer)) {
-        writer.WriteLine($"MSG|{CurrentCode}|{AppSettings.Current.DeviceName}|{payload}");
+        writer.WriteLine($"MSG|{CurrentCode}|{AppSettings.Current.DeviceName}|{finalPayload}");
       } else {
         // Fallback to Relay
-        var parts = payload.Split('|');
-        if (parts.Length >= 1) {
-            string type = parts[0];
-            string content = parts.Length > 1 ? string.Join("|", parts.Skip(1)) : "";
-            Broadcast(type, content);
+        var p = payload.Split('|');
+        if (p.Length >= 1) {
+            string t = p[0];
+            string c = p.Length > 1 ? string.Join("|", p.Skip(1)) : "";
+            // Relay broadcast logic (to everyone)
+            // But this function is "BroadcastDirect".
+            // If we use general Broadcast, it goes to everyone.
+            // If we want to target specific person via Relay, we need private message support in Server.
+            // Current Server "RELAY" command broadcasts to room.
+            // So falling back to Broadcast is the best we can do for now, but it leaks privacy if room has others.
+            // Assuming 1:1 usage mostly.
+            Broadcast(t, c); 
+            // Note: Broadcast() already logs to history for direct peers. 
+            // But since we are here (Direct failed), peerWriters is empty for this target.
+            // So Broadcast loop won't log it for this target.
+            // We should log it here manually as "Sent via Relay/Unknown".
+            // But we already logged it at the top of this function!
+            // So we are duplicated?
+            // "Log per peer" in Broadcast loop vs "Log at top of BroadcastDirect".
+            // BroadcastDirect intent is 1:1. So logging at top is correct.
+            // Broadcast loop logs for "Everyone".
+            // If we call Broadcast() here, it will try to log again?
+            // Broadcast() logs iterates peerWriters. If target is not in peerWriters, it won't log.
+            // So no duplicate log for this target.
         }
       }
     }

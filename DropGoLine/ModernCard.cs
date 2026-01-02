@@ -67,7 +67,6 @@ namespace DropGoLine {
     public ContentType CurrentType { get; private set; } = ContentType.None;
 
     public event Action<IDataObject>? OnDataDrop;
-    public event Action<string>? OnDragRequest;
     
     public void SetContent(string displayText, ContentType type, object? data, bool keepPreview = false) {
         this.Text = displayText;
@@ -113,6 +112,18 @@ namespace DropGoLine {
 
       this.MouseEnter += (s, e) => { currentBorderColor = HoverBorderColor; this.Invalidate(); };
       this.MouseLeave += (s, e) => { currentBorderColor = BorderColor; this.Invalidate(); };
+      
+      InitializeContextMenu();
+    }
+    
+    private ContextMenuStrip contextMenu;
+    public event Action<string>? OnHistoryRequest;
+
+    private void InitializeContextMenu() {
+        contextMenu = new ContextMenuStrip();
+        var historyItem = new ToolStripMenuItem("歷史紀錄");
+        historyItem.Click += (s, e) => { OnHistoryRequest?.Invoke(this.Name); };
+        contextMenu.Items.Add(historyItem);
     }
 
     protected override void OnMouseDown(MouseEventArgs e) {
@@ -134,6 +145,10 @@ namespace DropGoLine {
     protected override void OnMouseUp(MouseEventArgs e) {
         base.OnMouseUp(e);
         isMouseDown = false;
+        
+        if (e.Button == MouseButtons.Right) {
+             contextMenu.Show(this, e.Location);
+        }
     }
 
     protected override void OnDragEnter(DragEventArgs e) {

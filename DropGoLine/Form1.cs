@@ -47,7 +47,7 @@ namespace DropGoLine {
       public int cyBottomHeight;
     }
 
-    private TaskCompletionSource<string>? dragTcs;
+
 
     // === Window Resizing Constants ===
     private const int WM_NCHITTEST = 0x0084;
@@ -230,19 +230,7 @@ namespace DropGoLine {
           // Handle File Port/Relay Response (Trigger Download)
           if (msg.Type == ModernCard.ContentType.File_Transferring) {
 
-            // 1. Check Virtual Drag Handshake (Priority)
-            if (downloadHandshakeTcs != null && !downloadHandshakeTcs.Task.IsCompleted) {
-              string result = "";
-              if (msg.Tag is string transId) {
-                result = transId;
-              } else if (msg.Tag is int port) {
-                // Direct Mode: IP comes from Content?
-                // Content was fromIP.
-                result = $"{msg.Content}:{port}";
-              }
-              downloadHandshakeTcs.TrySetResult(result);
-              return; // Handled by Virtual Drag
-            }
+
 
             // 2. Legacy / SaveDialog Flow
             if (!string.IsNullOrEmpty(pendingSavePath)) {
@@ -282,10 +270,14 @@ namespace DropGoLine {
                 if (success) {
                   // Update UI or Signal Completion
                   this.Invoke((MethodInvoker)(() => {
-                    // If we have a pending drag operation or need to update UI
-                    if (dragTcs != null && !dragTcs.Task.IsCompleted) {
-                      dragTcs.TrySetResult(savedFile);
-                    }
+
+                    // Log History for Downloaded File
+                    // Determine Type
+                    string ext = System.IO.Path.GetExtension(savedFile).ToLower();
+                    string fileType = "File";
+                    if (ext == ".jpg" || ext == ".png" || ext == ".jpeg" || ext == ".bmp") fileType = "Image";
+                    
+                    HistoryManager.Instance.AddRecord(msg.Sender, true, fileType, System.IO.Path.GetFileName(savedFile), savedFile);
 
                     // Update Card UI
                     if (pnlMembers.Controls[msg.Sender] is ModernCard card) {
@@ -493,6 +485,13 @@ namespace DropGoLine {
 
 
     private void Form1_Load(object? sender, EventArgs e) {
+        // Clear all history on fresh app start as per user request
+        HistoryManager.Instance.ClearAllHistory();
+    }
+
+    private void ShowHistory(string peerName) {
+        HistoryForm form = new HistoryForm(peerName);
+        form.Show(this); // Show as modeless or modal? Modeless lets them keep chatting.
     }
 
     private void AddMember(string name) {
@@ -517,9 +516,18 @@ namespace DropGoLine {
 
       // Wire up Click Event
       newCard.Click += OnCardClick;
-      newCard.OnDragRequest += HandleDragRequest;
+
       // 🌟 Wire up Drop Event for Single Peer Transfer
       newCard.OnDataDrop += (data) => HandlePeerDrop(name, data);
+
+      // 🌟 Wire up History Request
+      newCard.OnHistoryRequest += (n) => {
+          if (this.InvokeRequired) {
+              this.Invoke(new Action(() => ShowHistory(n)));
+          } else {
+              ShowHistory(n);
+          }
+      };
 
       pnlMembers.Controls.Add(newCard);
       newCard.BringToFront();
@@ -593,68 +601,9 @@ namespace DropGoLine {
         }
     }
 
-    private TaskCompletionSource<string>? downloadHandshakeTcs;
 
-    // Handle "Drag to Download" (Fake Drag / Virtual File)
-    private void HandleDragRequest(string fileName) {
-      ModernCard? targetCard = null;
-      foreach (Control c in pnlMembers.Controls) {
-        if (c is ModernCard card && card.Text.Contains(fileName)) {
-          targetCard = card;
-          break;
-        }
-      }
 
-      if (targetCard == null)
-        return;
 
-      long size = targetCard.FileSize;
-      if (size <= 0)
-        size = 1024; // Fallback size if unknown, but better if known
-
-      // 建立 Virtual File DataObject
-      var virtualData = new VirtualFileDataObject(async (stream, onProgress) => {
-        // 1. Setup handshake waiter
-        downloadHandshakeTcs = new TaskCompletionSource<string>();
-
-        // 2. Send Request
-        // 這裡必須 Invoke 到主執行緒發送嗎？BroadcastDirect 內部是 thread-safe 嗎？
-        // P2PManager.BroadcastDirect 看起來是 safe 的 (Network IO)
-        P2PManager.Instance.BroadcastDirect(targetCard.Name, $"FILE_REQ|{fileName}");
-
-        // 3. Wait for P2P Handshake (FILE_PORT / FILE_RELAY_READY)
-        // Timeout 20s (Relay handshake might be slow)
-        var completed = await Task.WhenAny(downloadHandshakeTcs.Task, Task.Delay(20000));
-
-        if (completed != downloadHandshakeTcs.Task) {
-          // Timestamp out
-          return;
-        }
-
-        string identifier = await downloadHandshakeTcs.Task; // TransID or IP:Port
-
-        // 4. Start Transfer to Stream
-        if (identifier.Contains(":")) {
-          // Direct Mode "IP:Port"
-          var parts = identifier.Split(':');
-          await P2PManager.Instance.DownloadFileDirect(targetCard.Name, parts[0], int.Parse(parts[1]), stream, size, onProgress);
-        } else {
-          // Relay Mode "TransID"
-          await P2PManager.Instance.StartRelayReceiver(targetCard.Name, identifier, stream, size, onProgress);
-        }
-
-        // Transfer Done! 
-        // Update Card to point to the file? 
-        // 問題：Virtual File 不知道 Explorer 存到哪裡去了 (除非用特殊 Shell Hook)
-        // 所以這種模式下，Card Tag 不會更新為本地路徑。
-        // 下次拖曳還是會觸發下載 (或視為複製)
-        // 這是 Virtual File 的特性。
-
-      }, fileName, size);
-
-      // Start Drag (Blocking Call until Drop complete)
-      targetCard.DoDragDrop(virtualData, DragDropEffects.Copy);
-    }
 
     private void OnCardClick(object? sender, EventArgs e) {
       var card = sender as ModernCard;
