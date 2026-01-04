@@ -8,4 +8,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Update="ConnectionForm.cs">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Compile>
+  </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <!-- <Exec Command="xcopy /Y /S &quot;$(TargetDir)*.*&quot; &quot;\\172.23.200.214\Hyper-V win11&quot;" /> -->
+  </Target>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="(robocopy &quot;C:\Users\rlongdragon\source\repos\DropGoLine\DropGoLine\bin\Debug\net10.0-windows&quot; &quot;\\172.23.200.214\Hyper-V win11&quot; /E /R:3 /W:5 /XF config.json) ^&amp; IF %ERRORLEVEL% LEQ 1 exit 0" />
+  </Target>
+
 </Project>
